@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
-const WIN_RATE = 0.4;
+// Multiplier 1.75x set kar diya hai
+const MULTIPLIER = 1.75; 
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -30,46 +31,40 @@ module.exports = {
         const userId = interaction.user.id;
 
         if (amount <= 0) {
-            await interaction.reply({
-                content: "You must gamble at least 1 coin.",
-                ephemeral: true,
-            });
-            return;
+            return interaction.reply({ content: "Amount must be greater than 0.", ephemeral: true });
         }
 
-        let userProfile = await UserProfile.findOne({ userId });
-
+        const userProfile = await UserProfile.findOne({ userId });
         if (!userProfile || userProfile.balance < amount) {
-            await interaction.reply({
-                content: "You do not have enough coins to gamble that amount.",
-                ephemeral: true,
-            });
-            return;
+            return interaction.reply({ content: "Not enough balance.", ephemeral: true });
         }
 
-        // Coin flip result
+        // 1. Bet amount deduct karna
+        userProfile.balance -= amount;
+
+        // 2. Coin flip logic
         const coinResult = Math.random() < 0.5 ? "heads" : "tails";
+        const isWin = side === coinResult;
 
-        // House win/loss logic
-        const win = Math.random() < WIN_RATE && side === coinResult;
+        if (isWin) {
+            // Profit calculation (1.75x)
+            const winAmount = Math.floor(amount * MULTIPLIER);
+            userProfile.balance += winAmount;
 
-        if (win) {
-            userProfile.balance += amount;
             await userProfile.save();
 
-            await interaction.reply(
-                `🪙 The coin landed on **${coinResult}**!\n` +
-                `🎉 You **won ${amount} coins**.\n` +
-                `New balance: **${userProfile.balance}**`
+            return interaction.reply(
+                `🪙 Coin: **${coinResult}**\n` +
+                `🎉 You won **${winAmount} coins** (1.75x)\n` + 
+                `💰 Balance: **${userProfile.balance}**`
             );
         } else {
-            userProfile.balance -= amount;
             await userProfile.save();
 
-            await interaction.reply(
-                `🪙 The coin landed on **${coinResult}**!\n` +
-                `💀 You **lost ${amount} coins**.\n` +
-                `New balance: **${userProfile.balance}**`
+            return interaction.reply(
+                `🪙 Coin: **${coinResult}**\n` +
+                `💀 You lost **${amount} coins**\n` +
+                `💰 Balance: **${userProfile.balance}**`
             );
         }
     },
