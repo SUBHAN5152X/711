@@ -4,7 +4,7 @@ const UserProfile = require("../../schemas/UserProfile");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("leaderboard")
-        .setDescription("Showing top 10 wagerers"),
+        .setDescription("Showing top 10 Balance!"),
 
     run: async ({ interaction, message }) => {
         if (interaction) await interaction.deferReply();
@@ -39,7 +39,7 @@ module.exports = {
                     name: `crushmminfo: Leaderboard`, 
                     iconURL: (interaction || message).client.user.displayAvatarURL() 
                 })
-                .setTitle("Showing top 10 wagerers: Daily") // Header match
+                .setTitle("Showing top 10 Balance Users") // Header match
                 .setDescription(description)
                 .setColor("#2b2d31") // Dark background match
                 .setFooter({ 

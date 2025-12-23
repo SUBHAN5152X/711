@@ -1,56 +1,69 @@
-const { SlashCommandBuilder } = require("discord.js");
-const UserProfile = require("../../schemas/UserProfile");
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const Code = require("../../schemas/Code");
+const UserProfile = require("../../schemas/UserProfile");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("redeem")
-        .setDescription("Redeem a code to get coins")
-        .addStringOption(option =>
-            option.setName("code")
-                .setDescription("The code to redeem")
-                .setRequired(true)
-        ),
+        .setDescription("Redeem a promo code for rewards")
+        .addStringOption(opt => opt.setName("code").setDescription("Enter the code").setRequired(true)),
 
     run: async ({ interaction }) => {
-        const userId = interaction.user.id;
         const codeInput = interaction.options.getString("code").toUpperCase();
+        const userId = interaction.user.id;
+        await interaction.deferReply();
 
-        const code = await Code.findOne({ code: codeInput });
-        if (!code) {
-            await interaction.reply({ content: "Invalid code.", ephemeral: true });
-            return;
-        }
+        try {
+            const codeData = await Code.findOne({ code: codeInput });
 
-        // Check allowed roles
-        if (code.allowedRoles.length > 0) {
-            const memberRoles = interaction.member.roles.cache.map(r => r.id);
-            const hasRole = memberRoles.some(role => code.allowedRoles.includes(role));
-            if (!hasRole) {
-                await interaction.reply({ content: "You do not have the required role to redeem this code.", ephemeral: true });
-                return;
+            // 1. Error: Code Not Found
+            if (!codeData) {
+                const errEmbed = new EmbedBuilder()
+                    .setAuthor({ name: 'crushmmerror: Invalid Code', iconURL: interaction.user.displayAvatarURL() })
+                    .setDescription(`❌ The code \`${codeInput}\` does not exist or has expired.`)
+                    .setColor('#ff4b2b') // Red Color
+                    .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() });
+                return await interaction.editReply({ embeds: [errEmbed] });
             }
-        }
 
-        if (code.expiresAt && code.expiresAt < new Date()) {
-            await interaction.reply({ content: "This code has expired.", ephemeral: true });
-            return;
-        }
+            // 2. Error: Already Redeemed
+            if (codeData.redeemedBy.includes(userId)) {
+                const usedEmbed = new EmbedBuilder()
+                    .setAuthor({ name: 'crushmmerror: Already Redeemed', iconURL: interaction.user.displayAvatarURL() })
+                    .setDescription(`⌛ You have already claimed the rewards for code \`${codeInput}\`.`)
+                    .setColor('#f1c40f') // Yellow/Gold
+                    .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() });
+                return await interaction.editReply({ embeds: [usedEmbed] });
+            }
 
-        if (code.redeemedBy.includes(userId)) {
-            await interaction.reply({ content: "You have already redeemed this code.", ephemeral: true });
-            return;
-        }
+            // 3. Error: Expiry Check
+            if (codeData.expiresAt && new Date() > codeData.expiresAt) {
+                const expiredEmbed = new EmbedBuilder()
+                    .setAuthor({ name: 'crushmmerror: Code Expired', iconURL: interaction.user.displayAvatarURL() })
+                    .setDescription(`🥀 This promo code has expired.`)
+                    .setColor('#ff4b2b')
+                    .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() });
+                return await interaction.editReply({ embeds: [expiredEmbed] });
+            }
 
-        let profile = await UserProfile.findOne({ userId });
-        if (!profile) profile = await UserProfile.create({ userId, balance: 0 });
+            // 4. Success: Redeem Logic
+            await UserProfile.findOneAndUpdate(
+                { userId },
+                { $inc: { balance: codeData.amount, bonusReceived: codeData.amount } }, // Stats update
+                { upsert: true }
+            );
 
-        profile.balance += code.amount;
-        await profile.save();
+            codeData.redeemedBy.push(userId);
+            await codeData.save();
 
-        code.redeemedBy.push(userId);
-        await code.save();
-
-        await interaction.reply(`✅ You redeemed **${code.amount} coins** with code **${codeInput}**. Your new balance: **${profile.balance}**`);
-    },
-};
+            // Premium Success Embed
+            const successEmbed = new EmbedBuilder()
+                .setAuthor({ name: 'crushmminfo: Code Redeemed!', iconURL: interaction.user.displayAvatarURL() })
+                .setTitle(`✅ Successfully claimed \`${codeInput}\``)
+                .setDescription(`You have received **🪙 ${codeData.amount.toFixed(2)}** in your balance.`)
+                .addFields(
+                    { name: 'Reward', value: `🪙 ${codeData.amount.toFixed(2)} points`, inline: true },
+                    { name: 'Type', value: `Promo Code`, inline: true }
+                )
+                .setColor('#2ecc71') // RoBets Green
+                .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() })
