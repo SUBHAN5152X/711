@@ -31,7 +31,7 @@ module.exports = {
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setDescription(`> 🪙 **Financial Overview for <@${userId}>**`)
                 .addFields(
-                    { name: '💰 Current Balance', value: `## 🪙 ${userProfile.balance.toLocaleString()} Points`, inline: false },
+                    { name: '💰 Current Balance', value: `🪙 ${userProfile.balance.toLocaleString()} Points`, inline: false },
                     { name: '💎 Assets', value: `\`LTC:\` 0.0000\n\`USD:\` $${(userProfile.balance / 100).toFixed(2)}`, inline: true },
                     { name: '📊 Statistics', value: `\`Rank:\` Member\n\`Status:\` Active`, inline: true },
                     { name: '━━━━━━━━━━━━━━━━━━━━━━━━', value: ' ' }
