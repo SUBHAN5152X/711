@@ -11,52 +11,57 @@ module.exports = {
         if (interaction) await interaction.deferReply();
 
         try {
+            // 1. Database se user uthao, agar nahi hai toh naya banao
             let userProfile = await UserProfile.findOne({ userId: user.id });
             if (!userProfile) {
                 userProfile = new UserProfile({ userId: user.id, balance: 0, lastDaily: 0 });
+                await userProfile.save();
             }
 
-            // --- 1. Cooldown Check (Sabse Pehle) ---
-            const dailyCooldown = 24 * 60 * 60 * 1000; // 24 Hours in ms
+            // 2. Cooldown calculation
+            const dailyCooldown = 24 * 60 * 60 * 1000; 
             const lastClaimed = userProfile.lastDaily || 0;
-            const currentTime = Date.now();
+            const timeLeft = dailyCooldown - (Date.now() - lastClaimed);
 
-            if (currentTime - lastClaimed < dailyCooldown) {
-                const nextClaimTime = lastClaimed + dailyCooldown;
-                const timeRemaining = nextClaimTime - currentTime;
-                
-                const hours = Math.floor(timeRemaining / (1000 * 60 * 60));
-                const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
+            // 3. Agar time bacha hai toh seedha rok do
+            if (timeLeft > 0) {
+                const hours = Math.floor(timeLeft / (1000 * 60 * 60));
+                const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
 
                 const waitEmbed = new EmbedBuilder()
-                    .setAuthor({ name: `crushmmerror: Daily Reward Already Claimed`, iconURL: user.displayAvatarURL() })
-                    .setDescription(`⌛ Aap pehle hi claim kar chuke hain!\n\nWapas aaiye: **${hours}h ${minutes}m** baad.`)
+                    .setAuthor({ name: `crushmmerror: Already Claimed`, iconURL: user.displayAvatarURL() })
+                    .setDescription(`⌛ **Aap claim kar chuke hain!**\n\nWapas aaiye: **${hours}h ${minutes}m** baad.`)
                     .setColor('#ff4b2b')
                     .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
 
                 return interaction ? interaction.editReply({ embeds: [waitEmbed] }) : message.reply({ embeds: [waitEmbed] });
             }
 
-            // --- 2. Balance Check (Min 1 Point) ---
+            // 4. Min Balance Check
             if (userProfile.balance < 1) {
                 const errEmbed = new EmbedBuilder()
-                    .setAuthor({ name: `crushmmerror: Unable to Claim Daily Reward`, iconURL: user.displayAvatarURL() })
-                    .setDescription(`❌ **Minimum 1 point in balance required** to claim daily reward.`)
+                    .setAuthor({ name: `crushmmerror: Low Balance`, iconURL: user.displayAvatarURL() })
+                    .setDescription(`❌ Daily claim karne ke liye kam se kam **🪙 1.00 point** hona chahiye.`)
                     .setColor('#ff4b2b')
                     .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
                 
                 return interaction ? interaction.editReply({ embeds: [errEmbed] }) : message.reply({ embeds: [errEmbed] });
             }
 
-            // --- 3. Update Database (Atomic Update) ---
-            userProfile.balance += 1;
-            userProfile.lastDaily = currentTime;
-            await userProfile.save();
+            // 5. Reward dena aur TIME SAVE KARNA (Atomic Update)
+            // Hum .findOneAndUpdate use karenge taaki data turant lock ho jaye
+            await UserProfile.findOneAndUpdate(
+                { userId: user.id },
+                { 
+                    $inc: { balance: 1 }, 
+                    $set: { lastDaily: Date.now() } 
+                },
+                { new: true }
+            );
 
             const scsEmbed = new EmbedBuilder()
                 .setAuthor({ name: `crushmminfo: Daily Reward Claimed!`, iconURL: user.displayAvatarURL() })
-                .setDescription(`🎉 You claimed your daily **🪙 1.00 point**!`)
-                .addFields({ name: '💰 New Balance', value: `## 🪙 ${userProfile.balance.toFixed(2)}` })
+                .setDescription(`🎉 You claimed **🪙 1.00 point**!`)
                 .setColor('#00ffcc')
                 .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() })
                 .setTimestamp();
@@ -64,8 +69,8 @@ module.exports = {
             return interaction ? await interaction.editReply({ embeds: [scsEmbed] }) : await message.channel.send({ embeds: [scsEmbed] });
 
         } catch (error) {
-            console.error("Daily Error:", error);
-            if (interaction) interaction.editReply("Kuch galti hui, baad mein try karein.");
+            console.error(error);
+            if (interaction) interaction.editReply("Database error!");
         }
     },
 };
