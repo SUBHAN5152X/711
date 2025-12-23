@@ -17,8 +17,8 @@ module.exports = {
             // 1. Minimum Amount Check ($2 = 200 points)
             if (amount < 200) {
                 const minErr = new EmbedBuilder()
-                    .setAuthor({ name: `crushmmerror: Minimum Withdrawal`, iconURL: user.displayAvatarURL() })
-                    .setDescription(`❌ Aap kam se kam **200 points ($2.00)** withdraw kar sakte hain.`)
+                    .setAuthor({ name: ` Minimum Withdrawal`, iconURL: user.displayAvatarURL() })
+                    .setDescription(`❌ Minimum withdraw amount is  **200 points ($2.00)** .`)
                     .setColor('#ff4b2b')
                     .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
                 
@@ -38,7 +38,7 @@ module.exports = {
 
             // 3. Success Embed with Ticket Link
             const withdrawEmbed = new EmbedBuilder()
-                .setAuthor({ name: `crushmminfo: Withdrawal Requested`, iconURL: user.displayAvatarURL() })
+                .setAuthor({ name: ` Withdrawal Requested`, iconURL: user.displayAvatarURL() })
                 .setDescription(
                     `✅ Successfully withdrawn **🪙 ${amount} points**.\n\n` +
                     `⚠️ **Next Step:**\n` +

@@ -1,12 +1,13 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
-const PROFIT_MULTIPLIER = 1.65; // 1.65x Profit (100 -> 265 total)
+const PAYOUT_MULTIPLIER = 1.65; 
+const WIN_CHANNEL_ID = "1453089703438975127"; // Aapka announcement channel
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("blackjack")
-        .setDescription("Play blackjack against the dealer (Win 1.65x Profit)")
+        .setDescription("Play blackjack (Win 1.65x Total Payout)")
         .addIntegerOption(opt => opt.setName("amount").setDescription("Points to bet").setRequired(true)),
 
     run: async ({ interaction }) => {
@@ -18,7 +19,6 @@ module.exports = {
         const profile = await UserProfile.findOne({ userId });
         if (!profile || profile.balance < amount) return interaction.reply({ content: "❌ Insufficient balance!", ephemeral: true });
 
-        // Bet deduct pehle hi karlo
         profile.balance -= amount;
         await profile.save();
 
@@ -28,7 +28,7 @@ module.exports = {
 
         const getSum = (hand) => {
             let sum = hand.reduce((a, b) => a + b, 0);
-            if (sum > 21 && hand.includes(11)) sum -= 10; // Ace logic
+            if (sum > 21 && hand.includes(11)) sum -= 10;
             return sum;
         };
 
@@ -38,7 +38,7 @@ module.exports = {
         );
 
         const createEmbed = (title, color, showDealer = false) => {
-            const embed = new EmbedBuilder()
+            return new EmbedBuilder()
                 .setAuthor({ name: `711 Bet: Blackjack`, iconURL: interaction.user.displayAvatarURL() })
                 .setTitle(title)
                 .addFields(
@@ -46,35 +46,26 @@ module.exports = {
                     { name: 'Dealer Hand', value: showDealer ? `Cards: \`${dealerHand.join(", ")}\` \nTotal: **${getSum(dealerHand)}**` : `Cards: \`${dealerHand[0]}, ?\` \nTotal: **?**`, inline: true }
                 )
                 .setColor(color)
-                .setFooter({ text: `711 Bet • Bet Amount: ${amount}`, iconURL: interaction.client.user.displayAvatarURL() });
-            return embed;
+                .setFooter({ text: `711 Bet • Bet: ${amount}`, iconURL: interaction.client.user.displayAvatarURL() });
         };
 
         const msg = await interaction.reply({ embeds: [createEmbed('Game Started', '#2b2d31')], components: [row] });
-
-        const filter = i => i.user.id === userId;
-        const collector = msg.createMessageComponentCollector({ filter, time: 60000 });
+        const collector = msg.createMessageComponentCollector({ filter: i => i.user.id === userId, time: 60000 });
 
         collector.on('collect', async i => {
             if (i.customId === 'hit') {
                 playerHand.push(deck[Math.floor(Math.random() * deck.length)]);
                 if (getSum(playerHand) > 21) {
                     collector.stop('bust');
-                    return i.update({ embeds: [createEmbed('💀 BUST! You went over 21', '#ff4b2b', true)], components: [] });
+                    return i.update({ embeds: [createEmbed('💀 BUST!', '#ff4b2b', true)], components: [] });
                 }
                 await i.update({ embeds: [createEmbed('Your turn...', '#2b2d31')] });
-            } else if (i.customId === 'stand') {
-                collector.stop('stand');
-            }
+            } else if (i.customId === 'stand') collector.stop('stand');
         });
 
         collector.on('end', async (collected, reason) => {
             if (reason === 'bust') return;
-
-            // Dealer's Turn
-            while (getSum(dealerHand) < 17) {
-                dealerHand.push(deck[Math.floor(Math.random() * deck.length)]);
-            }
+            while (getSum(dealerHand) < 17) dealerHand.push(deck[Math.floor(Math.random() * deck.length)]);
 
             const pSum = getSum(playerHand);
             const dSum = getSum(dealerHand);
@@ -82,30 +73,30 @@ module.exports = {
             const updatedProfile = await UserProfile.findOne({ userId });
 
             if (dSum > 21 || pSum > dSum) {
-                // WIN LOGIC (1.65x Profit)
-                const winAmount = Math.floor(amount * (1 + PROFIT_MULTIPLIER)); 
-                updatedProfile.balance += winAmount;
+                const winTotal = Math.floor(amount * PAYOUT_MULTIPLIER);
+                updatedProfile.balance += winTotal;
                 updatedProfile.wins += 1;
-                updatedProfile.winAmount += (winAmount - amount); // Pure Profit record in stats
+                updatedProfile.winAmount += (winTotal - amount); 
                 
-                finalTitle = `🎉 YOU WON! Received 🪙 ${winAmount}`;
+                finalTitle = `🎉 WIN! Received 🪙 ${winTotal}`;
                 finalColor = '#2ecc71';
+
+                // --- Announcement Logic ---
+                const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
+                if (winChannel) {
+                    winChannel.send(`🎉 **${interaction.user.username}** has just won **🪙 ${winTotal}** in **Blackjack** !!`);
+                }
             } else if (pSum === dSum) {
-                // TIE (PUSH)
-                updatedProfile.balance += amount; // Refund
-                finalTitle = '🤝 PUSH! Points Refunded';
+                updatedProfile.balance += amount; 
+                finalTitle = '🤝 PUSH! Refunded';
                 finalColor = '#f1c40f';
             } else {
-                // LOSS
-                finalTitle = '💀 DEALER WINS!';
+                finalTitle = '💀 LOSE!';
                 finalColor = '#ff4b2b';
             }
 
             await updatedProfile.save();
-            await interaction.editReply({ 
-                embeds: [createEmbed(finalTitle, finalColor, true)], 
-                components: [] 
-            });
+            await interaction.editReply({ embeds: [createEmbed(finalTitle, finalColor, true)], components: [] });
         });
     },
 };

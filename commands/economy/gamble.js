@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
 const WIN_RATE = 0.4; // 40% win chance
+const WIN_CHANNEL_ID = "1453089703438975127"; // Announcement channel ID
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -35,8 +36,8 @@ module.exports = {
             if (win) {
                 // --- Stats Update: Win logic ---
                 userProfile.balance += amount;
-                userProfile.wins = (userProfile.wins || 0) + 1; // Increment win count
-                userProfile.winAmount = (userProfile.winAmount || 0) + amount; // Total winnings
+                userProfile.wins = (userProfile.wins || 0) + 1; 
+                userProfile.winAmount = (userProfile.winAmount || 0) + amount; 
                 await userProfile.save();
 
                 resultEmbed
@@ -46,6 +47,13 @@ module.exports = {
                         `💰 **Gained:** 🪙 ${amount.toFixed(2)}\n` +
                         `🏦 **New Balance:** 🪙 ${userProfile.balance.toFixed(2)}`
                     );
+
+                // --- Announcement Logic ---
+                const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
+                if (winChannel) {
+                    winChannel.send(`🎉 **${interaction.user.username}** has just won **🪙 ${amount}** in **Gamble** !!`);
+                }
+
             } else {
                 // Loss logic
                 userProfile.balance -= amount;
