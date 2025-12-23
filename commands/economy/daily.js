@@ -1,57 +1,73 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const UserProfile = require("../../schemas/UserProfile");
-
-const dailyAmount = 1;
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName("daily")
-        .setDescription("Collect your daily reward!"),
+        .setName('daily')
+        .setDescription('Claim your daily reward'),
 
-    run: async ({ interaction }) => {
-        if (!interaction.inGuild()) {
-            await interaction.reply({
-                content: "This command can only be used inside a server.",
-                ephemeral: true,
-            });
-            return;
-        }
-
-        await interaction.deferReply();
+    run: async ({ interaction, message }) => {
+        if (interaction) await interaction.deferReply();
 
         try {
-            let userProfile = await UserProfile.findOne({
-                userId: interaction.user.id,
-            });
+            const user = interaction ? interaction.user : message.author;
+            const userId = user.id;
 
-            const today = new Date().toDateString();
+            let userProfile = await UserProfile.findOne({ userId });
 
-            if (userProfile) {
-                const lastDaily = userProfile.lastDailyCollected?.toDateString();
-
-                if (lastDaily === today) {
-                    await interaction.editReply(
-                        "You have already collected your daily reward. Come back tomorrow."
-                    );
-                    return;
-                }
-            } else {
-                userProfile = new UserProfile({
-                    userId: interaction.user.id,
-                    balance: 0,
-                });
+            if (!userProfile) {
+                userProfile = new UserProfile({ userId, balance: 0 });
             }
 
-            userProfile.balance += dailyAmount;
-            userProfile.lastDailyCollected = new Date();
+            // --- Condition Check (Min 1 Point) ---
+            if (userProfile.balance < 1) {
+                const errorEmbed = new EmbedBuilder()
+                    .setAuthor({ name: `crushmmerror: Unable to Claim Daily Reward`, iconURL: user.displayAvatarURL() })
+                    .setDescription(`❌ **Minimum 1 point in balance required**\nYour current balance is 🪙 ${userProfile.balance}`)
+                    .setColor('#ff4b2b') // Red color for error
+                    .setFooter({ text: '711 Bet' });
+
+                return interaction ? interaction.editReply({ embeds: [errorEmbed] }) : message.reply({ embeds: [errorEmbed] });
+            }
+
+            // --- Cooldown Logic (24 Hours) ---
+            const lastDaily = userProfile.lastDaily || 0;
+            const currentTime = Date.now();
+            const cooldown = 24 * 60 * 60 * 1000; // 24 Ghante
+
+            if (currentTime - lastDaily < cooldown) {
+                const timeLeft = cooldown - (currentTime - lastDaily);
+                const hours = Math.floor(timeLeft / (1000 * 60 * 60));
+                const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+
+                return interaction ? 
+                    interaction.editReply(`⌛ Wait **${hours}h ${minutes}m** to claim again!`) : 
+                    message.reply(`⌛ Wait **${hours}h ${minutes}m** to claim again!`);
+            }
+
+            // --- Reward Denewala Logic ---
+            const reward = 50; // Rozana 50 points (Aap change kar sakte ho)
+            userProfile.balance += reward;
+            userProfile.lastDaily = currentTime;
             await userProfile.save();
 
-            await interaction.editReply(
-                `${dailyAmount} coin added.\nNew balance: ${userProfile.balance}`
-            );
+            const successEmbed = new EmbedBuilder()
+                .setAuthor({ name: `crushmminfo: Daily Reward Claimed!`, iconURL: user.displayAvatarURL() })
+                .setDescription(`🎉 You claimed your daily **🪙 ${reward} points**!`)
+                .addFields({ name: '💰 New Balance', value: `🪙 ${userProfile.balance.toFixed(2)}` })
+                .setColor('#00ffcc') // Success Cyan color
+                .setFooter({ text: '711 Bet • Come back tomorrow!' })
+                .setTimestamp();
+
+            if (interaction) {
+                return await interaction.editReply({ embeds: [successEmbed] });
+            } else {
+                return await message.channel.send({ embeds: [successEmbed] });
+            }
+
         } catch (error) {
-            console.error(`Error handling /daily:`, error);
-            await interaction.editReply("An error occurred while collecting your daily reward.");
+            console.error("Daily Command Error:", error);
+            if (interaction) interaction.editReply("Something went wrong!");
         }
     },
 };
