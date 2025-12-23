@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-// Path ko dhyan se check karein (agar economy folder ke andar hai toh teen bar ../ lagega)
-const UserProfile = require("../../schemas/UserProfile"); 
+const UserProfile = require("../schemas/UserProfile"); // Logs ke mutabik path check kiya
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -18,30 +17,16 @@ module.exports = {
             const amountInput = interaction ? interaction.options.getString('amount') : args[1];
 
             if (!targetUser || targetUser.id === user.id || targetUser.bot) {
-                const err = "❌ Invalid user! Khud ko ya bot ko tip nahi de sakte.";
-                return interaction ? interaction.editReply(err) : message.reply(err);
+                return (interaction || message).reply("❌ Invalid user!");
             }
 
-            let amount;
-            if (amountInput.endsWith('$')) {
-                amount = parseFloat(amountInput.replace('$', '')) * 100;
-            } else {
-                amount = parseFloat(amountInput);
-            }
-
-            if (isNaN(amount) || amount <= 0) {
-                const err = "❌ Sahi amount likho (e.g. 100 or 0.50$)";
-                return interaction ? interaction.editReply(err) : message.reply(err);
-            }
+            let amount = amountInput.endsWith('$') ? parseFloat(amountInput.replace('$', '')) * 100 : parseFloat(amountInput);
+            if (isNaN(amount) || amount <= 0) return (interaction || message).reply("❌ Invalid amount!");
 
             const senderProfile = await UserProfile.findOne({ userId: user.id });
-            if (!senderProfile || senderProfile.balance < amount) {
-                const err = "❌ Aapke paas itne points nahi hain!";
-                return interaction ? interaction.editReply(err) : message.reply(err);
-            }
+            if (!senderProfile || senderProfile.balance < amount) return (interaction || message).reply("❌ Insufficient balance!");
 
-            let receiverProfile = await UserProfile.findOne({ userId: targetUser.id });
-            if (!receiverProfile) receiverProfile = new UserProfile({ userId: targetUser.id, balance: 0 });
+            let receiverProfile = await UserProfile.findOne({ userId: targetUser.id }) || new UserProfile({ userId: targetUser.id, balance: 0 });
 
             senderProfile.balance -= amount;
             receiverProfile.balance += amount;
@@ -52,14 +37,11 @@ module.exports = {
                 .setAuthor({ name: `crushmminfo: Tip Sent Successfully`, iconURL: user.displayAvatarURL() })
                 .setDescription(`✅ <@${user.id}> tipped **🪙 ${amount.toFixed(2)} points** to <@${targetUser.id}>`)
                 .setColor('#00ffcc')
-                .setFooter({ text: '711 Bet' });
+                // Footer mein logo add kiya
+                .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() }) 
+                .setTimestamp();
 
-            if (interaction) return await interaction.editReply({ embeds: [successEmbed] });
-            return await message.channel.send({ embeds: [successEmbed] });
-
-        } catch (error) {
-            console.error(error);
-            if (interaction) interaction.editReply("Error!");
-        }
+            return interaction ? await interaction.editReply({ embeds: [successEmbed] }) : await message.channel.send({ embeds: [successEmbed] });
+        } catch (e) { console.log(e); }
     },
 };

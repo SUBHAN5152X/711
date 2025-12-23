@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const UserProfile = require("../../schemas/UserProfile");
+const UserProfile = require("../schemas/UserProfile");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -8,66 +8,37 @@ module.exports = {
 
     run: async ({ interaction, message }) => {
         if (interaction) await interaction.deferReply();
+        const user = interaction ? interaction.user : message.author;
 
         try {
-            const user = interaction ? interaction.user : message.author;
-            const userId = user.id;
+            let userProfile = await UserProfile.findOne({ userId: user.id }) || new UserProfile({ userId: user.id, balance: 0 });
 
-            let userProfile = await UserProfile.findOne({ userId });
-
-            if (!userProfile) {
-                userProfile = new UserProfile({ userId, balance: 0 });
-            }
-
-            // --- Condition Check (Min 1 Point) ---
+            // Condition: Min 1 point required
             if (userProfile.balance < 1) {
-                const errorEmbed = new EmbedBuilder()
+                const errEmbed = new EmbedBuilder()
                     .setAuthor({ name: `crushmmerror: Unable to Claim Daily Reward`, iconURL: user.displayAvatarURL() })
-                    .setDescription(`❌ **Minimum 1 point in balance required**\nYour current balance is 🪙 ${userProfile.balance}`)
-                    .setColor('#ff4b2b') // Red color for error
-                    .setFooter({ text: '711 Bet' });
-
-                return interaction ? interaction.editReply({ embeds: [errorEmbed] }) : message.reply({ embeds: [errorEmbed] });
+                    .setDescription(`❌ **Minimum 1 point in balance required**`)
+                    .setColor('#ff4b2b')
+                    .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
+                return interaction ? interaction.editReply({ embeds: [errEmbed] }) : message.reply({ embeds: [errEmbed] });
             }
 
-            // --- Cooldown Logic (24 Hours) ---
-            const lastDaily = userProfile.lastDaily || 0;
-            const currentTime = Date.now();
-            const cooldown = 24 * 60 * 60 * 1000; // 24 Ghante
+            // Cooldown check
+            const cooldown = 24 * 60 * 60 * 1000;
+            if (Date.now() - (userProfile.lastDaily || 0) < cooldown) return (interaction || message).reply("⌛ Wait 24h!");
 
-            if (currentTime - lastDaily < cooldown) {
-                const timeLeft = cooldown - (currentTime - lastDaily);
-                const hours = Math.floor(timeLeft / (1000 * 60 * 60));
-                const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-
-                return interaction ? 
-                    interaction.editReply(`⌛ Wait **${hours}h ${minutes}m** to claim again!`) : 
-                    message.reply(`⌛ Wait **${hours}h ${minutes}m** to claim again!`);
-            }
-
-            // --- Reward Denewala Logic ---
-            const reward = 50; // Rozana 50 points (Aap change kar sakte ho)
-            userProfile.balance += reward;
-            userProfile.lastDaily = currentTime;
+            userProfile.balance += 50;
+            userProfile.lastDaily = Date.now();
             await userProfile.save();
 
-            const successEmbed = new EmbedBuilder()
+            const scsEmbed = new EmbedBuilder()
                 .setAuthor({ name: `crushmminfo: Daily Reward Claimed!`, iconURL: user.displayAvatarURL() })
-                .setDescription(`🎉 You claimed your daily **🪙 ${reward} points**!`)
-                .addFields({ name: '💰 New Balance', value: `🪙 ${userProfile.balance.toFixed(2)}` })
-                .setColor('#00ffcc') // Success Cyan color
-                .setFooter({ text: '711 Bet • Come back tomorrow!' })
+                .setDescription(`🎉 You claimed **🪙 50 points**!`)
+                .setColor('#00ffcc')
+                .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() })
                 .setTimestamp();
 
-            if (interaction) {
-                return await interaction.editReply({ embeds: [successEmbed] });
-            } else {
-                return await message.channel.send({ embeds: [successEmbed] });
-            }
-
-        } catch (error) {
-            console.error("Daily Command Error:", error);
-            if (interaction) interaction.editReply("Something went wrong!");
-        }
+            return interaction ? await interaction.editReply({ embeds: [scsEmbed] }) : await message.channel.send({ embeds: [scsEmbed] });
+        } catch (e) { console.log(e); }
     },
 };
