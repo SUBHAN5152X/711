@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const UserProfile = require("../../schemas/UserProfile");
+// Path ko dhyan se check karein (agar economy folder ke andar hai toh teen bar ../ lagega)
+const UserProfile = require("../../schemas/UserProfile"); 
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -9,55 +10,56 @@ module.exports = {
         .addStringOption(option => option.setName('amount').setDescription('Amount (e.g. 100 or 0.25$)').setRequired(true)),
 
     run: async ({ interaction, message, args }) => {
+        const user = interaction ? interaction.user : message.author;
         if (interaction) await interaction.deferReply();
 
         try {
-            const sender = interaction ? interaction.user : message.author;
             const targetUser = interaction ? interaction.options.getUser('user') : message.mentions.users.first();
             const amountInput = interaction ? interaction.options.getString('amount') : args[1];
 
-            if (!targetUser || targetUser.id === sender.id) {
-                return (interaction || message).reply("❌ Khud ko ya kisi invalid user ko tip nahi de sakte!");
+            if (!targetUser || targetUser.id === user.id || targetUser.bot) {
+                const err = "❌ Invalid user! Khud ko ya bot ko tip nahi de sakte.";
+                return interaction ? interaction.editReply(err) : message.reply(err);
             }
 
-            // Amount Parse Karna (Points vs USD)
             let amount;
             if (amountInput.endsWith('$')) {
-                const usd = parseFloat(amountInput.replace('$', ''));
-                amount = usd * 100; // Maan lo 1$ = 100 points
+                amount = parseFloat(amountInput.replace('$', '')) * 100;
             } else {
                 amount = parseFloat(amountInput);
             }
 
-            if (isNaN(amount) || amount <= 0) return (interaction || message).reply("❌ Sahi amount likho!");
+            if (isNaN(amount) || amount <= 0) {
+                const err = "❌ Sahi amount likho (e.g. 100 or 0.50$)";
+                return interaction ? interaction.editReply(err) : message.reply(err);
+            }
 
-            const senderProfile = await UserProfile.findOne({ userId: sender.id });
+            const senderProfile = await UserProfile.findOne({ userId: user.id });
             if (!senderProfile || senderProfile.balance < amount) {
-                return (interaction || message).reply("❌ Aapke paas itne points nahi hain!");
+                const err = "❌ Aapke paas itne points nahi hain!";
+                return interaction ? interaction.editReply(err) : message.reply(err);
             }
 
             let receiverProfile = await UserProfile.findOne({ userId: targetUser.id });
             if (!receiverProfile) receiverProfile = new UserProfile({ userId: targetUser.id, balance: 0 });
 
-            // Transaction
             senderProfile.balance -= amount;
             receiverProfile.balance += amount;
             await senderProfile.save();
             await receiverProfile.save();
 
             const successEmbed = new EmbedBuilder()
-                .setAuthor({ name: `crushmminfo: Tip Sent Successfully`, iconURL: sender.displayAvatarURL() })
-                .setDescription(`✅ <@${sender.id}> tipped **🪙 ${amount.toFixed(2)} points** to <@${targetUser.id}>`)
+                .setAuthor({ name: `crushmminfo: Tip Sent Successfully`, iconURL: user.displayAvatarURL() })
+                .setDescription(`✅ <@${user.id}> tipped **🪙 ${amount.toFixed(2)} points** to <@${targetUser.id}>`)
                 .setColor('#00ffcc')
-                .setFooter({ text: '711 Bet' })
-                .setTimestamp();
+                .setFooter({ text: '711 Bet' });
 
             if (interaction) return await interaction.editReply({ embeds: [successEmbed] });
             return await message.channel.send({ embeds: [successEmbed] });
 
         } catch (error) {
-            console.error("Tip Error:", error);
-            if (interaction) interaction.editReply("Error while tipping!");
+            console.error(error);
+            if (interaction) interaction.editReply("Error!");
         }
     },
 };
