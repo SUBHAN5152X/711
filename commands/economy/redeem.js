@@ -67,3 +67,13 @@ module.exports = {
                 )
                 .setColor('#2ecc71') // RoBets Green
                 .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            return await interaction.editReply({ embeds: [successEmbed] });
+
+        } catch (error) {
+            console.error(error);
+            await interaction.editReply("❌ Something went wrong while redeeming.");
+        }
+    },
+};
