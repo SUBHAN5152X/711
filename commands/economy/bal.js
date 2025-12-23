@@ -4,54 +4,52 @@ const UserProfile = require("../../schemas/UserProfile");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('bal')
-        .setDescription('Check your points balance'),
+        .setDescription('View your current points and financial status'),
 
     run: async ({ interaction, message }) => {
-        // 1. Pehle reply ko "Defer" karein taaki "Did not respond" error na aaye
+        // Timeout se bachne ke liye
         if (interaction) await interaction.deferReply();
 
         try {
             const user = interaction ? interaction.user : message.author;
             const userId = user.id;
 
-            // 2. Database se data nikalna
             let userProfile = await UserProfile.findOne({ userId });
 
             if (!userProfile) {
-                const noProfile = "❌ Aapka profile nahi mila. Pehle kuch game khelein!";
-                return interaction ? interaction.editReply(noProfile) : message.reply(noProfile);
+                const noAccount = "❌ **Account Not Found!** Play a game first to create one.";
+                return interaction ? interaction.editReply(noAccount) : message.reply(noAccount);
             }
 
-            // 3. Premium Embed Design
-            const balanceEmbed = new EmbedBuilder()
+            // --- OP Embed Design ---
+            const balEmbed = new EmbedBuilder()
+                .setColor('#00ffcc') // Premium Cyan Color
                 .setAuthor({ 
-                    name: `crushmminfo: ${user.username}'s Balance`, 
-                    iconURL: user.displayAvatarURL() 
+                    name: `crushmminfo: ${user.username}'s Bank`, 
+                    iconURL: user.displayAvatarURL({ dynamic: true }) 
                 })
-                .setDescription(
-                    `**Points:** \`${userProfile.balance.toFixed(2)}\`\n` +
-                    `**LTC:** \`0.0000\`\n` +
-                    `**USD:** \`$N/A\``
-                )
+                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
+                .setDescription(`> 🪙 **Financial Overview for <@${userId}>**`)
                 .addFields(
-                    { name: '━━━━━━━━━━━━━━━━━━━━━━━━', value: ' ' },
-                    { name: '💰 POINTS BALANCE', value: `## 🪙 ${userProfile.balance.toFixed(2)}`, inline: false }
+                    { name: '💰 Current Balance', value: `## 🪙 ${userProfile.balance.toLocaleString()} Points`, inline: false },
+                    { name: '💎 Assets', value: `\`LTC:\` 0.0000\n\`USD:\` $${(userProfile.balance / 100).toFixed(2)}`, inline: true },
+                    { name: '📊 Statistics', value: `\`Rank:\` Member\n\`Status:\` Active`, inline: true },
+                    { name: '━━━━━━━━━━━━━━━━━━━━━━━━', value: ' ' }
                 )
-                .setColor('#3b82f6') 
-                .setFooter({ text: '711 Bet • Dec 23, 2025' })
+                .setFooter({ text: '711 Bet • Powered by Quantum Tech', iconURL: user.client.user.displayAvatarURL() })
                 .setTimestamp();
 
-            // 4. Final Reply
             if (interaction) {
-                return await interaction.editReply({ embeds: [balanceEmbed] });
+                return await interaction.editReply({ embeds: [balEmbed] });
             } else {
-                return await message.channel.send({ embeds: [balanceEmbed] });
+                return await message.channel.send({ embeds: [balEmbed] });
             }
+
         } catch (error) {
-            console.error("Balance Error:", error);
-            const errorMsg = "Something went wrong while fetching balance.";
-            if (interaction) return interaction.editReply(errorMsg);
-            message.reply(errorMsg);
+            console.error("Balance Command Error:", error);
+            const errMsg = "⚠️ An error occurred while fetching your balance.";
+            if (interaction) return interaction.editReply(errMsg);
+            message.reply(errMsg);
         }
     },
 };
