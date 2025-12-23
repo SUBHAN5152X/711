@@ -2,8 +2,8 @@
   "name": "711",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+ "scripts": {
+  "start": "node index.js"
   },
   "keywords": [],
   "author": "",
@@ -13,6 +13,7 @@
     "discord.js": "^14.25.1",
     "djs-commander": "^0.0.50",
     "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "mongodb": "^7.0.0",
     "mongoose": "^9.0.2"
   }

@@ -8,6 +8,18 @@ const path = require("path");
 
 const PREFIX = process.env.PREFIX || "-";
 
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+  res.send('Bot is Online!');
+});
+
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
+
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
