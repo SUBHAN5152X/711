@@ -1,65 +1,44 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const UserProfile = require("../../../schemas/UserProfile");
+// FIXED PATH: Sirf do bar ../
+const UserProfile = require("../../schemas/UserProfile");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('tip')
-        .setDescription('Tip another user points or USD')
-        .addUserOption(option => option.setName('user').setDescription('The user to tip').setRequired(true))
-        .addStringOption(option => option.setName('amount').setDescription('Amount (e.g. 100 or 0.25$)').setRequired(true)),
+        .setDescription('Tip another user')
+        .addUserOption(o => o.setName('user').setDescription('User to tip').setRequired(true))
+        .addStringOption(o => o.setName('amount').setDescription('Amount (e.g. 100 or 0.25$)').setRequired(true)),
 
     run: async ({ interaction, message, args }) => {
         const user = interaction ? interaction.user : message.author;
         if (interaction) await interaction.deferReply();
 
         try {
-            const targetUser = interaction ? interaction.options.getUser('user') : message.mentions.users.first();
+            const targetUser = interaction ? interaction.options.getUser('user') : (message.mentions.users.first());
             const amountInput = interaction ? interaction.options.getString('amount') : (args ? args[1] : null);
 
-            if (!targetUser || targetUser.id === user.id || targetUser.bot) {
-                const err = "❌ Invalid user! Khud ko ya bot ko tip nahi de sakte.";
-                return interaction ? interaction.editReply(err) : message.reply(err);
-            }
+            if (!targetUser || targetUser.id === user.id || targetUser.bot) return (interaction || message).reply("❌ Invalid user!");
 
-            // Amount Parsing
-            let amount;
-            if (amountInput.endsWith('$')) {
-                amount = parseFloat(amountInput.replace('$', '')) * 100;
-            } else {
-                amount = parseFloat(amountInput);
-            }
+            let amount = amountInput?.endsWith('$') ? parseFloat(amountInput.replace('$', '')) * 100 : parseFloat(amountInput);
+            if (isNaN(amount) || amount <= 0) return (interaction || message).reply("❌ Invalid amount!");
 
-            if (isNaN(amount) || amount <= 0) {
-                const err = "❌ Sahi amount likho (e.g. 100 or 0.50$)";
-                return interaction ? interaction.editReply(err) : message.reply(err);
-            }
+            const sender = await UserProfile.findOne({ userId: user.id });
+            if (!sender || sender.balance < amount) return (interaction || message).reply("❌ Insufficient balance!");
 
-            const senderProfile = await UserProfile.findOne({ userId: user.id });
-            if (!senderProfile || senderProfile.balance < amount) {
-                const err = "❌ Aapke paas itne points nahi hain!";
-                return interaction ? interaction.editReply(err) : message.reply(err);
-            }
+            let receiver = await UserProfile.findOne({ userId: targetUser.id }) || new UserProfile({ userId: targetUser.id, balance: 0 });
 
-            let receiverProfile = await UserProfile.findOne({ userId: targetUser.id }) || new UserProfile({ userId: targetUser.id, balance: 0 });
+            sender.balance -= amount;
+            receiver.balance += amount;
+            await sender.save();
+            await receiver.save();
 
-            senderProfile.balance -= amount;
-            receiverProfile.balance += amount;
-            await senderProfile.save();
-            await receiverProfile.save();
-
-            const successEmbed = new EmbedBuilder()
+            const tipEmbed = new EmbedBuilder()
                 .setAuthor({ name: `crushmminfo: Tip Sent Successfully`, iconURL: user.displayAvatarURL() })
                 .setDescription(`✅ <@${user.id}> tipped **🪙 ${amount.toFixed(2)} points** to <@${targetUser.id}>`)
                 .setColor('#00ffcc')
-                .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() })
-                .setTimestamp();
+                .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
 
-            if (interaction) return await interaction.editReply({ embeds: [successEmbed] });
-            return await message.channel.send({ embeds: [successEmbed] });
-
-        } catch (error) {
-            console.error(error);
-            if (interaction) interaction.editReply("Error while tipping!");
-        }
+            return interaction ? await interaction.editReply({ embeds: [tipEmbed] }) : await message.channel.send({ embeds: [tipEmbed] });
+        } catch (e) { console.error(e); }
     },
 };
