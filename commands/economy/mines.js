@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
 const WIN_CHANNEL_ID = "1453089703438975127";
@@ -16,19 +16,19 @@ module.exports = {
         const minesCount = interaction.options.getInteger("mines");
         const userId = interaction.user.id;
 
-        // 1. Validation Checks
-        if (bet < MIN_BET) return interaction.reply({ content: `❌ Minimum bet is ${MIN_BET} coins.`, flags: [MessageFlags.Ephemeral] });
-        if (minesCount < 3 || minesCount > 24) return interaction.reply({ content: `❌ Mines must be between 3 and 24.`, flags: [MessageFlags.Ephemeral] });
+        // 1. Validations
+        if (bet < MIN_BET) return interaction.reply({ content: `❌ Minimum bet is ${MIN_BET} coins.`, flags: [64] });
+        if (minesCount < 3 || minesCount > 24) return interaction.reply({ content: `❌ Mines must be between 3 and 24.`, flags: [64] });
 
         let profile = await UserProfile.findOne({ userId });
-        if (!profile || profile.balance < bet) return interaction.reply({ content: "❌ Insufficient balance!", flags: [MessageFlags.Ephemeral] });
+        if (!profile || profile.balance < bet) return interaction.reply({ content: "❌ Insufficient balance!", flags: [64] });
 
-        // 2. Initial Deductions
+        // 2. Deduct Balance & Track Wager
         profile.balance -= bet;
         profile.wageredAmount = (profile.wageredAmount || 0) + bet;
         await profile.save();
 
-        // 3. Game Setup
+        // 3. Grid Logic
         let grid = Array(25).fill("diamond");
         let placedMines = 0;
         while (placedMines < minesCount) {
@@ -44,15 +44,15 @@ module.exports = {
         let gameOver = false;
 
         const calculateMultiplier = () => {
-            // Standard Mines Formula
             let n = 25;
             let m = minesCount;
             let d = diamondsFound;
+            if (d === 0) return 1.00;
             let mult = 1;
             for (let i = 0; i < d; i++) {
                 mult *= (n - i) / (n - m - i);
             }
-            return mult * 0.95; // 5% House Edge
+            return Math.max(1, mult * 0.96); // 4% House Edge
         };
 
         const createGridRows = (showAll = false) => {
@@ -68,13 +68,12 @@ module.exports = {
                            .setStyle(grid[index] === "mine" ? ButtonStyle.Danger : ButtonStyle.Success)
                            .setDisabled(true);
                     } else {
-                        btn.setLabel("❓").setStyle(ButtonStyle.Secondary);
+                        btn.setLabel("❓").setStyle(ButtonStyle.Secondary).setDisabled(gameOver);
                     }
                     row.addComponents(btn);
                 }
                 rows.push(row);
             }
-            // Cashout Button
             const cashoutRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId("cashout")
@@ -89,7 +88,8 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setAuthor({ name: `${interaction.user.username}'s Mines Game`, iconURL: interaction.user.displayAvatarURL() })
             .setDescription(`**Bet:** 🪙 ${bet} | **Mines:** 💣 ${minesCount}\n**Multiplier:** x${calculateMultiplier().toFixed(2)}`)
-            .setColor("#2b2d31");
+            .setColor("#2b2d31")
+            .setFooter({ text: "711 Bet" });
 
         const msg = await interaction.reply({ embeds: [embed], components: createGridRows() });
         const collector = msg.createMessageComponentCollector({ filter: i => i.user.id === userId, time: 300000 });
@@ -97,55 +97,47 @@ module.exports = {
         collector.on("collect", async i => {
             if (i.customId.startsWith("mine_")) {
                 const index = parseInt(i.customId.split("_")[1]);
+                if (revealed[index]) return i.deferUpdate();
+                
                 revealed[index] = true;
-
                 if (grid[index] === "mine") {
                     gameOver = true;
                     collector.stop("hit_mine");
+                    return i.update({ embeds: [new EmbedBuilder().setTitle("💥 BOOM!").setDescription(`You hit a mine and lost **🪙 ${bet}**`).setColor("#ff4b2b")], components: createGridRows(true) });
                 } else {
                     diamondsFound++;
-                    if (diamondsFound === (25 - minesCount)) {
-                        collector.stop("full_clear");
-                    } else {
-                        await i.update({ 
-                            embeds: [embed.setDescription(`**Bet:** 🪙 ${bet} | **Mines:** 💣 ${minesCount}\n**Multiplier:** x${calculateMultiplier().toFixed(2)}`)], 
-                            components: createGridRows() 
-                        });
-                    }
+                    const newMult = calculateMultiplier();
+                    await i.update({ 
+                        embeds: [embed.setDescription(`**Bet:** 🪙 ${bet} | **Mines:** 💣 ${minesCount}\n**Multiplier:** x${newMult.toFixed(2)}`)], 
+                        components: createGridRows() 
+                    });
                 }
             } else if (i.customId === "cashout") {
                 collector.stop("cashout");
+                await i.deferUpdate();
             }
         });
 
         collector.on("end", async (collected, reason) => {
+            if (reason === "hit_mine") return;
+
             let finalMult = calculateMultiplier();
             let winAmount = Math.floor(bet * finalMult);
             let userProfile = await UserProfile.findOne({ userId });
 
-            if (reason === "cashout" || reason === "full_clear") {
+            if (reason === "cashout") {
                 userProfile.balance += winAmount;
                 userProfile.wins += 1;
                 userProfile.winAmount += (winAmount - bet);
                 await userProfile.save();
 
-                const winEmbed = new EmbedBuilder()
-                    .setTitle("💰 CASHOUT SUCCESS")
-                    .setDescription(`You found **${diamondsFound}** diamonds!\n**Win Amount:** 🪙 ${winAmount} (x${finalMult.toFixed(2)})`)
-                    .setColor("#2ecc71");
-
-                await interaction.editReply({ embeds: [winEmbed], components: createGridRows(true) });
+                await interaction.editReply({ 
+                    embeds: [new EmbedBuilder().setTitle("💰 SUCCESS").setDescription(`You cashed out **🪙 ${winAmount}** (x${finalMult.toFixed(2)})`).setColor("#2ecc71")], 
+                    components: createGridRows(true) 
+                });
 
                 const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
-                if (winChannel) {
-                    winChannel.send(`🎉 **${interaction.user.username}** just cashed out **🪙 ${winAmount}** in Mines !!`);
-                }
-            } else {
-                const loseEmbed = new EmbedBuilder()
-                    .setTitle("💥 BOOM! YOU HIT A MINE")
-                    .setDescription(`You lost **🪙 ${bet}**.\nBetter luck next time!`)
-                    .setColor("#ff4b2b");
-                await interaction.editReply({ embeds: [loseEmbed], components: createGridRows(true) });
+                if (winChannel) winChannel.send(`🎉 **${interaction.user.username}** won **🪙 ${winAmount}** in Mines !!`);
             }
         });
     }

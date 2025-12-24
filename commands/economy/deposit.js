@@ -20,7 +20,7 @@ module.exports = {
                 `To add points to your balance, please deposit **LTC** to the address below:\n\n` +
                 `**LTC Address:**\n\`ltc1q3ykla2dz8hw3njmszmnr7auvnm949j5kru49qm\`\n\n` +
                 `**Instructions:**\n` +
-                `After sending the payment, please create a ticket in <#1453079406829375729> with your transaction screenshot for verification.`
+                `If you are suffering from any kind of issue , \n Please create a ticket in <#1453079340660031720> .`
             )
             .setFooter({ text: "711 Bet • Secure Deposits", iconURL: botLogo })
             .setTimestamp();
