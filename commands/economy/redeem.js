@@ -9,53 +9,56 @@ module.exports = {
         .addStringOption(opt => opt.setName("code").setDescription("Enter the code").setRequired(true)),
 
     run: async ({ interaction }) => {
-        // Hum user ka input uppercase kar rahe hain taaki case-sensitive na rahe
         const codeStr = interaction.options.getString("code").toUpperCase();
         const userId = interaction.user.id;
 
         try {
-            // Database search
             const promo = await Code.findOne({ code: codeStr });
 
             if (!promo) {
-                return interaction.reply({ content: "❌ This code does not exist.", flags: [64] });
+                return interaction.reply({ content: "❌ This code does not exist.", ephemeral: true });
             }
 
-            // Expiry Check
+            // 1. Array Initialization Check (Yeh zaroori hai crash rokne ke liye)
+            if (!promo.usedBy) {
+                promo.usedBy = [];
+            }
+
+            // 2. Expiry Check
             if (promo.expiresAt && promo.expiresAt < new Date()) {
-                return interaction.reply({ content: "❌ This code has expired.", flags: [64] });
+                return interaction.reply({ content: "❌ This code has expired.", ephemeral: true });
             }
 
-            // Max Uses Check
-            if (promo.usedBy && promo.usedBy.length >= promo.maxUses) {
-                return interaction.reply({ content: "❌ This code has reached its maximum usage limit.", flags: [64] });
+            // 3. Max Uses Check
+            if (promo.usedBy.length >= promo.maxUses) {
+                return interaction.reply({ content: "❌ This code has reached its maximum usage limit.", ephemeral: true });
             }
 
-            // Already Redeemed Check
-            if (promo.usedBy && promo.usedBy.includes(userId)) {
-                return interaction.reply({ content: "❌ You have already redeemed this code.", flags: [64] });
+            // 4. Already Redeemed Check
+            if (promo.usedBy.includes(userId)) {
+                return interaction.reply({ content: "❌ You have already redeemed this code.", ephemeral: true });
             }
 
-            // Role Restriction Check
+            // 5. Role Restriction Check
             if (promo.allowedRoleId) {
                 if (!interaction.member.roles.cache.has(promo.allowedRoleId)) {
                     return interaction.reply({ 
                         content: `❌ You don't have the required role to use this code.`, 
-                        flags: [64] 
+                        ephemeral: true 
                     });
                 }
             }
 
             // --- REDEMPTION START ---
             
-            // Add user to used list
+            // Add user to used list safely
             promo.usedBy.push(userId);
             await promo.save();
 
-            // Update user balance (with atomicity)
+            // Update user balance
             const updatedProfile = await UserProfile.findOneAndUpdate(
                 { userId: userId },
-                { $inc: { balance: promo.amount } }, // $inc use karna best hai coins ke liye
+                { $inc: { balance: promo.amount } },
                 { upsert: true, new: true }
             );
 
@@ -71,7 +74,11 @@ module.exports = {
 
         } catch (err) {
             console.error("Redeem Command Error:", err);
-            return interaction.reply({ content: "❌ An internal error occurred. Please try again later.", flags: [64] });
+            // Check if interaction already replied
+            if (interaction.replied || interaction.deferred) {
+                return interaction.followUp({ content: "❌ An internal error occurred.", ephemeral: true });
+            }
+            return interaction.reply({ content: "❌ An internal error occurred.", ephemeral: true });
         }
     },
 };
