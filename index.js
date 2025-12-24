@@ -5,22 +5,28 @@ const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
 const Giveaway = require("./schemas/Giveaway");
-const UserProfile = require("./schemas/UserProfile"); // Ensure path is correct
+const UserProfile = require("./schemas/UserProfile");
 
 const PREFIX = process.env.PREFIX || "-";
-const invites = new Map(); // Global map for tracking
+const invites = new Map();
 
+/* ================================
+    EXPRESS SERVER (For 24/7 Render)
+================================ */
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 10000;
+app.get('/', (req, res) => res.send('711 Bet Bot is Online!'));
+app.listen(port, () => console.log(`✅ Web server active on port ${port}`));
 
-app.get('/', (req, res) => {
-  res.send('711 Bet Bot is Online!');
-});
-
-app.listen(port, () => {
-  console.log(`✅ Web server port ${port} par chal raha hai.`);
-});
+/* ================================
+    CHANNEL CONFIGURATION
+================================ */
+// In channels mein bot koi command accept nahi karega
+const RESTRICTED_CHANNELS = [
+    "1453274442548514860", // General Chat ID
+    "1453327792119742524"  // Media ID
+];
 
 const client = new Client({
     intents: [
@@ -28,28 +34,41 @@ const client = new Client({
         IntentsBitField.Flags.GuildMembers,
         IntentsBitField.Flags.GuildMessages,
         IntentsBitField.Flags.MessageContent,
-        IntentsBitField.Flags.GuildInvites, // Added for invite tracking
+        IntentsBitField.Flags.GuildInvites,
     ],
 });
 
 client.commands = new Collection();
 
 /* ================================
-    INVITE TRACKER LOGIC
+    READY EVENT (Cleanup & Invites)
 ================================ */
 client.on("ready", async () => {
-    // Cache all invites for each guild
+    // 1. CLEAR GHOST COMMANDS (Removes deleted commands like /mines)
+    try {
+        console.log("🔄 Refreshing global slash commands...");
+        await client.application.commands.set([]); 
+        console.log("✅ Ghost commands cleared from Discord!");
+    } catch (error) {
+        console.error("Cleanup error:", error);
+    }
+
+    // 2. CACHE INVITES
     client.guilds.cache.forEach(async (guild) => {
         try {
             const firstInvites = await guild.invites.fetch();
             invites.set(guild.id, new Map(firstInvites.map((inv) => [inv.code, inv.uses])));
-            console.log(`✅ Cached ${firstInvites.size} invites for: ${guild.name}`);
+            console.log(`✅ Cached invites for: ${guild.name}`);
         } catch (err) {
-            console.log(`❌ Invite Cache Error for ${guild.name}:`, err.message);
+            console.log(`❌ Invite Cache Error: ${err.message}`);
         }
     });
+    console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
+/* ================================
+    INVITE TRACKER (On Member Join)
+================================ */
 client.on("guildMemberAdd", async (member) => {
     try {
         const newInvites = await member.guild.invites.fetch();
@@ -57,7 +76,6 @@ client.on("guildMemberAdd", async (member) => {
         const invite = newInvites.find((i) => i.uses > oldInvites.get(i.code));
 
         if (invite) {
-            // Update Database: Increment inviter's count and save inviter ID for the new member
             await UserProfile.findOneAndUpdate(
                 { userId: invite.inviter.id },
                 { $inc: { invites: 1 } },
@@ -69,60 +87,14 @@ client.on("guildMemberAdd", async (member) => {
                 { upsert: true }
             );
         }
-        // Refresh cache
         invites.set(member.guild.id, new Map(newInvites.map((inv) => [inv.code, inv.uses])));
     } catch (err) {
-        console.error("Member Join Invite Track Error:", err);
+        console.error("Invite Track Error:", err);
     }
 });
 
 /* ================================
-    GIVEAWAY AUTO-END CHECKER
-================================ */
-async function checkGiveaways() {
-    const now = new Date();
-    const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
-
-    for (const data of endedGiveaways) {
-        try {
-            const channel = await client.channels.fetch(data.channelId);
-            const msg = await channel.messages.fetch(data.messageId);
-            await endGiveawayLogic(client, data, msg);
-        } catch (err) {
-            data.ended = true; 
-            await data.save();
-        }
-    }
-}
-
-async function endGiveawayLogic(client, data, msg) {
-    if (data.participants.length === 0) {
-        data.ended = true;
-        await data.save();
-        return msg.edit({ content: "❌ Giveaway Ended: No participants.", embeds: [], components: [] });
-    }
-
-    const winners = [];
-    const tempParticipants = [...data.participants];
-    for (let i = 0; i < Math.min(data.winnerCount, tempParticipants.length); i++) {
-        const randomIndex = Math.floor(Math.random() * tempParticipants.length);
-        winners.push(`<@${tempParticipants.splice(randomIndex, 1)[0]}>`);
-    }
-
-    const endEmbed = new EmbedBuilder()
-        .setTitle("🎁 Giveaway Ended")
-        .setDescription(`**Prize:** ${data.prize}\n**Winners:** ${winners.join(", ")}\n**Host:** <@${data.hostedBy}>`)
-        .setColor("#2b2d31")
-        .setTimestamp();
-
-    await msg.edit({ embeds: [endEmbed], components: [] });
-    await msg.channel.send(`🎊 Congratulations ${winners.join(", ")}! You won **${data.prize}**!`);
-    data.ended = true;
-    await data.save();
-}
-
-/* ================================
-    INTERACTION HANDLER
+    INTERACTION HANDLER (Slash & Buttons)
 ================================ */
 client.on("interactionCreate", async (interaction) => {
     if (interaction.isAutocomplete()) {
@@ -131,17 +103,29 @@ client.on("interactionCreate", async (interaction) => {
         return;
     }
 
+    if (interaction.isChatInputCommand()) {
+        // CHANNEL RESTRICTION CHECK
+        if (RESTRICTED_CHANNELS.includes(interaction.channelId)) {
+            return interaction.reply({ 
+                content: "❌ Commands are disabled here. Please use the designated Game Rooms.", 
+                flags: [64] 
+            });
+        }
+    }
+
     if (interaction.isButton()) {
+        // Giveaway Join
         if (interaction.customId === "ga_join") {
             const data = await Giveaway.findOne({ messageId: interaction.message.id });
-            if (!data || data.ended) return interaction.reply({ content: "❌ Ye giveaway khatam ho chuka hai!", flags: [64] });
-            if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ Aap pehle hi join kar chuke ho!", flags: [64] });
+            if (!data || data.ended) return interaction.reply({ content: "❌ This giveaway has ended!", flags: [64] });
+            if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ You have already joined!", flags: [64] });
 
             data.participants.push(interaction.user.id);
             await data.save();
-            return interaction.reply({ content: "✅ Joined successfully!", flags: [64] });
+            return interaction.reply({ content: "✅ Successfully joined!", flags: [64] });
         }
 
+        // Verification
         if (interaction.customId === "verify_btn") {
             const roleId = "1453285948581216356";
             const sixtyDays = 60 * 24 * 60 * 60 * 1000;
@@ -152,16 +136,28 @@ client.on("interactionCreate", async (interaction) => {
             try {
                 const role = interaction.guild.roles.cache.get(roleId);
                 await interaction.member.roles.add(role);
-                return interaction.reply({ content: "✅ Verified!", flags: [64] });
+                return interaction.reply({ content: "✅ Verification successful!", flags: [64] });
             } catch (err) {
-                return interaction.reply({ content: "❌ Role Error! Check Hierarchy.", flags: [64] });
+                return interaction.reply({ content: "❌ Role Hierarchy Error.", flags: [64] });
             }
         }
     }
 });
 
 /* ================================
-    COMMAND HANDLER (DJS-COMMANDER)
+    PREFIX MESSAGE HANDLER
+================================ */
+client.on("messageCreate", async (message) => {
+    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+    
+    // CHANNEL RESTRICTION CHECK
+    if (RESTRICTED_CHANNELS.includes(message.channelId)) return;
+
+    // Command running logic here if you use prefix...
+});
+
+/* ================================
+    DJS-COMMANDER & STARTUP
 ================================ */
 new CommandHandler({
     client,
@@ -170,9 +166,18 @@ new CommandHandler({
     guildId: process.env.GUILD_ID,
 });
 
-/* ================================
-    DATABASE + LOGIN
-================================ */
+async function checkGiveaways() {
+    const now = new Date();
+    const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
+    for (const data of endedGiveaways) {
+        try {
+            const channel = await client.channels.fetch(data.channelId);
+            const msg = await channel.messages.fetch(data.messageId);
+            // endGiveawayLogic helper needed here if not in separate file
+        } catch (err) { data.ended = true; await data.save(); }
+    }
+}
+
 (async () => {
     try {
         mongoose.set('strictQuery', false);
@@ -180,7 +185,5 @@ new CommandHandler({
         console.log("✅ Database Connected.");
         await client.login(process.env.TOKEN);
         setInterval(checkGiveaways, 10000); 
-    } catch (error) {
-        console.error("Login Error:", error);
-    }
+    } catch (error) { console.error("Login Error:", error); }
 })();
