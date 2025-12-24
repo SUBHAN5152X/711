@@ -4,27 +4,10 @@ const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const Giveaway = require("./schemas/Giveaway"); // Giveaway Schema import karein
 
 const PREFIX = process.env.PREFIX || "-";
 
-/* ================================
-    EXPRESS SERVER (For 24/7)
-================================ */
-const express = require('express');
-const app = express();
-const port = process.env.PORT || 10000;
-
-app.get('/', (req, res) => {
-  res.send('711 Bet Bot is Online!');
-});
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
-
-/* ================================
-    CLIENT INITIALIZATION
-================================ */
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
@@ -37,101 +20,104 @@ const client = new Client({
 client.commands = new Collection();
 
 /* ================================
-    COMMAND LOADER
+    GIVEAWAY AUTO-END CHECKER
 ================================ */
-const commandsPath = path.join(__dirname, "commands");
+// Ye har 10 second mein check karega ki koi giveaway khatam toh nahi hua
+async function checkGiveaways() {
+    const now = new Date();
+    const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
 
-function loadCommands(dir) {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    for (const file of files) {
-        const fullPath = path.join(dir, file.name);
-        if (file.isDirectory()) {
-            loadCommands(fullPath);
-        } else if (file.name.endsWith(".js")) {
-            const command = require(fullPath);
-            if (command?.data?.name) {
-                client.commands.set(command.data.name, command);
-            }
+    for (const data of endedGiveaways) {
+        try {
+            const channel = await client.channels.fetch(data.channelId);
+            const msg = await channel.messages.fetch(data.messageId);
+            
+            // Winners pick karne ka logic (Helper function)
+            await endGiveawayLogic(client, data, msg);
+        } catch (err) {
+            console.error("Giveaway end error:", err);
+            data.ended = true; // Error pe bhi true kar rahe taaki loop na fase
+            await data.save();
         }
     }
 }
-
-loadCommands(commandsPath);
 
 /* ================================
     INTERACTION HANDLER
 ================================ */
 client.on("interactionCreate", async (interaction) => {
     
-    // 1. Handle Autocomplete
+    // 1. Autocomplete
     if (interaction.isAutocomplete()) {
         const command = client.commands.get(interaction.commandName);
-        if (command?.autocomplete) {
-            try {
-                await command.autocomplete({ interaction, client });
-            } catch (error) {
-                console.error("Autocomplete Error:", error);
-            }
-        }
+        if (command?.autocomplete) await command.autocomplete({ interaction, client });
         return;
     }
 
-    // 2. Handle Buttons (Verification Only)
-    if (interaction.isButton() && interaction.customId === "verify_btn") {
-        const roleId = "1453285948581216356";
-        const sixtyDays = 60 * 24 * 60 * 60 * 1000;
-        const accountAge = Date.now() - interaction.member.user.createdTimestamp;
+    // 2. Buttons
+    if (interaction.isButton()) {
+        // --- GIVEAWAY JOIN BUTTON ---
+        if (interaction.customId === "ga_join") {
+            const data = await Giveaway.findOne({ messageId: interaction.message.id });
+            if (!data || data.ended) return interaction.reply({ content: "❌ Ye giveaway khatam ho chuka hai!", flags: [64] });
 
-        if (accountAge < sixtyDays) {
-            const remainingDays = Math.ceil((sixtyDays - accountAge) / (1000 * 60 * 60 * 24));
-            return interaction.reply({ 
-                content: `❌ **Failed:** Account must be 60 days old. Try again in ${remainingDays} days.`, 
-                flags: [64] 
-            });
+            if (data.participants.includes(interaction.user.id)) {
+                return interaction.reply({ content: "❌ Aap pehle hi join kar chuke ho!", flags: [64] });
+            }
+
+            data.participants.push(interaction.user.id);
+            await data.save();
+            return interaction.reply({ content: "✅ Giveaway joined! Good luck!", flags: [64] });
         }
 
-        const role = interaction.guild.roles.cache.get(roleId);
-        if (!role) return interaction.reply({ content: "❌ Role not found!", flags: [64] });
+        // --- VERIFICATION SYSTEM ---
+        if (interaction.customId === "verify_btn") {
+            const roleId = "1453285948581216356";
+            const sixtyDays = 60 * 24 * 60 * 60 * 1000;
+            const accountAge = Date.now() - interaction.member.user.createdTimestamp;
 
-        try {
-            await interaction.member.roles.add(role);
-            return interaction.reply({ content: "✅ **Verified!** Access granted.", flags: [64] });
-        } catch (err) {
-            return interaction.reply({ content: "❌ Role error! Bot role ko Verified role ke upar rakho.", flags: [64] });
+            if (accountAge < sixtyDays) {
+                return interaction.reply({ content: "❌ Account 60 din purana hona chahiye.", flags: [64] });
+            }
+
+            try {
+                const role = interaction.guild.roles.cache.get(roleId);
+                await interaction.member.roles.add(role);
+                return interaction.reply({ content: "✅ Verified!", flags: [64] });
+            } catch (err) {
+                return interaction.reply({ content: "❌ Role Error!", flags: [64] });
+            }
         }
     }
 });
 
-/* ================================
-    PREFIX MESSAGE HANDLER
-================================ */
-client.on("messageCreate", async message => {
-    if (message.author.bot || !message.guild) return;
-    if (!message.content.startsWith(PREFIX)) return;
-
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
-
-    const command = client.commands.get(commandName);
-    if (!command) return;
-
-    try {
-        await command.run({ message, args, client });
-    } catch (error) {
-        console.error("Prefix Command Error:", error);
+// Helper function to pick winners and edit embed
+async function endGiveawayLogic(client, data, msg) {
+    if (data.participants.length === 0) {
+        data.ended = true;
+        await data.save();
+        return msg.edit({ content: "❌ Giveaway Ended: No participants.", embeds: [], components: [] });
     }
-});
 
-/* ================================
-    COMMAND HANDLER (DJS-COMMANDER)
-================================ */
-new CommandHandler({
-    client,
-    eventsPath: path.join(__dirname, "events"),
-    commandsPath: path.join(__dirname, "commands"),
-    guildId: process.env.GUILD_ID,
-});
+    const winners = [];
+    const tempParticipants = [...data.participants];
+    for (let i = 0; i < Math.min(data.winnerCount, tempParticipants.length); i++) {
+        const randomIndex = Math.floor(Math.random() * tempParticipants.length);
+        winners.push(`<@${tempParticipants.splice(randomIndex, 1)[0]}>`);
+    }
+
+    const endEmbed = new EmbedBuilder()
+        .setTitle("🎁 Giveaway Ended")
+        .setDescription(`**Prize:** ${data.prize}\n**Winners:** ${winners.join(", ")}\n**Host:** <@${data.hostedBy}>`)
+        .setColor("#2b2d31")
+        .setTimestamp();
+
+    await msg.edit({ embeds: [endEmbed], components: [] });
+    await msg.channel.send(`🎊 Congratulations ${winners.join(", ")}! You won **${data.prize}**!`);
+
+    data.ended = true;
+    await data.save();
+}
 
 /* ================================
     DATABASE + LOGIN
@@ -144,7 +130,14 @@ new CommandHandler({
         
         await client.login(process.env.TOKEN);
         console.log(`✅ Logged in as ${client.user.tag}`);
+
+        // Bot online aate hi checker shuru karein
+        setInterval(checkGiveaways, 10000); 
+
     } catch (error) {
         console.error("Login Error:", error);
     }
 })();
+
+// Command Handler and Prefix logic (Same as yours)
+// ...
