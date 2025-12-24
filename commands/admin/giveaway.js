@@ -28,14 +28,14 @@ module.exports = {
     run: async ({ interaction, client }) => {
         const sub = interaction.options.getSubcommand();
 
-        // --- CREATE ---
+        // 1. CREATE SUBCOMMAND
         if (sub === "create") {
             const duration = interaction.options.getString("duration");
             const winners = interaction.options.getInteger("winners");
             const prize = interaction.options.getString("prize");
             const durationMs = ms(duration);
 
-            if (!durationMs) return interaction.reply({ content: "❌ Invalid duration!", flags: [64] });
+            if (!durationMs) return interaction.reply({ content: "❌ Invalid duration format!", ephemeral: true });
 
             const endTime = new Date(Date.now() + durationMs);
             const endTs = Math.floor(endTime.getTime() / 1000);
@@ -50,7 +50,8 @@ module.exports = {
                 new ButtonBuilder().setCustomId("ga_join").setEmoji("🎉").setStyle(ButtonStyle.Primary).setLabel("Enter")
             );
 
-            const msg = await interaction.reply({ content: "✅ Giveaway Created!", fetchReply: true });
+            // FetchReply true taaki ID mil sake
+            await interaction.reply({ content: "✅ Giveaway starting...", ephemeral: true });
             const gaMsg = await interaction.channel.send({ embeds: [embed], components: [row] });
 
             await Giveaway.create({
@@ -65,58 +66,54 @@ module.exports = {
             });
         }
 
-        // --- END ---
+        // 2. END SUBCOMMAND
         if (sub === "end") {
             const msgId = interaction.options.getString("message_id");
             const data = await Giveaway.findOne({ messageId: msgId });
 
-            if (!data || data.ended) return interaction.reply({ content: "❌ Giveaway not found or already ended!", flags: [64] });
+            if (!data || data.ended) return interaction.reply({ content: "❌ Giveaway not found or already ended!", ephemeral: true });
 
-            await endGiveaway(client, data);
-            return interaction.reply({ content: "✅ Giveaway ended early!", flags: [64] });
+            // Inline logic to avoid TLA issues
+            const channel = await client.channels.fetch(data.channelId);
+            const msg = await channel.messages.fetch(data.messageId);
+            
+            if (data.participants.length === 0) {
+                data.ended = true;
+                await data.save();
+                await msg.edit({ content: "❌ No one joined.", embeds: [], components: [] });
+                return interaction.reply({ content: "✅ Ended (No winners).", ephemeral: true });
+            }
+
+            const winners = [];
+            const tempParts = [...data.participants];
+            for (let i = 0; i < Math.min(data.winnerCount, tempParts.length); i++) {
+                const win = tempParts.splice(Math.floor(Math.random() * tempParts.length), 1)[0];
+                winners.push(`<@${win}>`);
+            }
+
+            const endEmbed = new EmbedBuilder()
+                .setTitle("🎁 Giveaway Ended")
+                .setDescription(`**Prize:** ${data.prize}\n**Winners:** ${winners.join(", ")}\n**Host:** <@${data.hostedBy}>`)
+                .setColor("#2b2d31");
+
+            await msg.edit({ embeds: [endEmbed], components: [] });
+            await channel.send(`🎊 Congratulations ${winners.join(", ")}! You won **${data.prize}**!`);
+            
+            data.ended = true;
+            await data.save();
+            return interaction.reply({ content: "✅ Giveaway ended!", ephemeral: true });
         }
 
-        // --- REROLL ---
+        // 3. REROLL SUBCOMMAND
         if (sub === "reroll") {
             const msgId = interaction.options.getString("message_id");
             const data = await Giveaway.findOne({ messageId: msgId });
 
-            if (!data || !data.ended) return interaction.reply({ content: "❌ Giveaway hasn't ended yet!", flags: [64] });
-            if (data.participants.length === 0) return interaction.reply({ content: "❌ No participants to reroll!", flags: [64] });
+            if (!data || !data.ended) return interaction.reply({ content: "❌ Giveaway hasn't ended yet!", ephemeral: true });
+            if (data.participants.length === 0) return interaction.reply({ content: "❌ No participants!", ephemeral: true });
 
             const newWinner = data.participants[Math.floor(Math.random() * data.participants.length)];
             await interaction.reply({ content: `🎊 **New Winner:** <@${newWinner}>\nPrize: **${data.prize}**` });
         }
     }
 };
-
-// --- HELPER FUNCTION TO END GIVEAWAY ---
-async function endGiveaway(client, data) {
-    const channel = await client.channels.fetch(data.channelId);
-    const msg = await channel.messages.fetch(data.messageId);
-    
-    if (data.participants.length === 0) {
-        data.ended = true;
-        await data.save();
-        return msg.edit({ content: "❌ No one joined the giveaway.", embeds: [], components: [] });
-    }
-
-    const winners = [];
-    const tempParts = [...data.participants];
-    for (let i = 0; i < Math.min(data.winnerCount, tempParts.length); i++) {
-        const win = tempParts.splice(Math.floor(Math.random() * tempParts.length), 1)[0];
-        winners.push(`<@${win}>`);
-    }
-
-    const endEmbed = new EmbedBuilder()
-        .setTitle("🎁 Giveaway Ended")
-        .setDescription(`**Prize:** ${data.prize}\n**Winners:** ${winners.join(", ")}\n**Host:** <@${data.hostedBy}>`)
-        .setColor("#2b2d31")
-        .setTimestamp();
-
-    await msg.edit({ embeds: [endEmbed], components: [] });
-    await channel.send(`🎊 Congratulations ${winners.join(", ")}! You won **${data.prize}**!`);
-    
-    data.ended = true;
-    await data.save();
-}
