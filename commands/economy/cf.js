@@ -2,7 +2,8 @@ const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
 const MULTIPLIER = 1.75; 
-const WIN_CHANNEL_ID = "1453089703438975127";
+// Bhai yahan teri nayi channel ID daal di hai
+const WIN_CHANNEL_ID = "1453275098038538374";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -31,11 +32,16 @@ module.exports = {
             profile.wins += 1;
             profile.winAmount += (winTotal - amount);
             embed.setColor('#2ecc71').setDescription(`🪙 Landed: **${result}**\n🎉 Won: **🪙 ${winTotal}**`);
+            
+            // Notification logic
             const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
-            if (winChannel) winChannel.send(`🎉 **${interaction.user.username}** won **🪙 ${winTotal}** in CF!`);
+            if (winChannel) {
+                winChannel.send(`🎉 **${interaction.user.username}** just won **🪙 ${winTotal.toLocaleString()}** in Coinflip!`);
+            }
         } else {
             embed.setColor('#ff4b2b').setDescription(`🪙 Landed: **${result}**\n💀 Lost: **🪙 ${amount}**`);
         }
+        
         await profile.save();
         return interaction.reply({ embeds: [embed] });
     }

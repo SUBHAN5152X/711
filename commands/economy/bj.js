@@ -2,7 +2,8 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const UserProfile = require("../../schemas/UserProfile");
 
 const PAYOUT_MULTIPLIER = 1.65; 
-const WIN_CHANNEL_ID = "1453089703438975127";
+// Naya Win Channel ID set kar diya
+const WIN_CHANNEL_ID = "1453275098038538374";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -66,14 +67,10 @@ module.exports = {
             }
 
             // --- RIGGED DEALER LOGIC ---
-            // Dealer tab tak card lega jab tak 19, 20, ya 21 na aa jaye
             while (getSum(dealerHand) < 19) {
                 let nextCard = deck[Math.floor(Math.random() * deck.length)];
-                
-                // Anti-Bust Check: Agar card lene se dealer 21 ke upar ja raha hai, 
-                // toh use zabardasti aisa card do ki wo 19-21 ke beech rahe.
                 if (getSum(dealerHand) + nextCard > 21) {
-                    dealerHand.push(21 - getSum(dealerHand)); // Dealer ko exactly 21 de do
+                    dealerHand.push(21 - getSum(dealerHand)); 
                 } else {
                     dealerHand.push(nextCard);
                 }
@@ -83,20 +80,22 @@ module.exports = {
             const dSum = getSum(dealerHand);
 
             if (dSum > 21 || pSum > dSum) {
-                // Winning (Ab iske chances bahut kam hain)
                 const winTotal = Math.floor(amount * PAYOUT_MULTIPLIER);
                 updatedProfile.balance += winTotal;
                 updatedProfile.wins += 1;
                 updatedProfile.winAmount += (winTotal - amount);
                 
                 interaction.editReply({ embeds: [createEmbed(`🎉 WIN! Received 🪙 ${winTotal}`, '#2ecc71', true)], components: [] });
+                
+                // Winner Notification Logic
                 const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
-                if (winChannel) winChannel.send(`🎉 **${interaction.user.username}** won **🪙 ${winTotal}** in BJ!`);
+                if (winChannel) {
+                    winChannel.send(`🎉 **${interaction.user.username}** just won **🪙 ${winTotal.toLocaleString()}** in Blackjack!`);
+                }
             } else if (pSum === dSum) {
                 updatedProfile.balance += amount;
                 interaction.editReply({ embeds: [createEmbed('🤝 PUSH! Refunded', '#f1c40f', true)], components: [] });
             } else {
-                // Dealer wins (Most of the time)
                 interaction.editReply({ embeds: [createEmbed('💀 DEALER WINS!', '#ff4b2b', true)], components: [] });
             }
             await updatedProfile.save();
