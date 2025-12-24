@@ -3,29 +3,17 @@ const { Client, IntentsBitField, Collection } = require("discord.js");
 const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
 const path = require("path");
-const Giveaway = require("./schemas/Giveaway");
-const UserProfile = require("./schemas/UserProfile");
 
 const PREFIX = process.env.PREFIX || "-";
-const invites = new Map();
 
-/* ================================
-    1. EXPRESS SERVER (Render Fix)
-================================ */
+// 1. EXPRESS SERVER (Render Health Check)
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 10000;
-
 app.get('/', (req, res) => res.send('711 Bet Bot is Live!'));
+app.listen(port, "0.0.0.0", () => console.log(`✅ Port ${port} Active`));
 
-// Render ko pehle port milna chahiye
-app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Web server active on port ${port}`);
-});
-
-/* ================================
-    2. BOT INITIALIZATION
-================================ */
+// 2. CLIENT SETUP
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
@@ -38,50 +26,29 @@ const client = new Client({
 
 client.commands = new Collection();
 
-const RESTRICTED_CHANNELS = [
-    "1453274442548514860", // General
-    "1453327792119742524"  // Media
-];
-
-/* ================================
-    3. EVENTS
-================================ */
-client.on("ready", async () => {
-    try {
-        // Ghost commands ko function ke andar clear kar rahe hain
-        await client.application.commands.set([]); 
-        console.log("✅ Commands refreshed successfully!");
-    } catch (error) {
-        console.error("Cleanup error:", error);
-    }
+// 3. READY EVENT (Safe Cleanup)
+client.on("ready", () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
+    // Commands clear karne ke liye await ko .then() mein daal diya taaki TLA error na aaye
+    client.application.commands.set([])
+        .then(() => console.log("✅ Commands Refreshed"))
+        .catch(err => console.error("❌ Cleanup Error:", err));
 });
 
-// ... (Baqi Interaction/Invite logic same rahega)
-
-/* ================================
-    4. STARTUP FUNCTION (CRASH FIX)
-================================ */
+// 4. COMMAND HANDLER
 new CommandHandler({
     client,
     eventsPath: path.join(__dirname, "events"),
     commandsPath: path.join(__dirname, "commands"),
-    guildId: process.env.GUILD_ID,
 });
 
-async function startBot() {
-    try {
-        mongoose.set('strictQuery', false);
-        await mongoose.connect(process.env.MONGODB_URI);
-        console.log("✅ Database Connected.");
-        
-        // Login await yahan safe hai
-        await client.login(process.env.TOKEN);
-    } catch (error) {
-        console.error("❌ Startup Error:", error);
-        process.exit(1); // Error aane par restart karega
-    }
-}
-
-// Global scope mein bina await ke call karein
-startBot();
+// 5. DATABASE & LOGIN (Using standard .then instead of await)
+mongoose.set('strictQuery', false);
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => {
+        console.log("✅ Database Connected");
+        return client.login(process.env.TOKEN);
+    })
+    .catch(err => {
+        console.error("❌ Startup Error:", err);
+    });
