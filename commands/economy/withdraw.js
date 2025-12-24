@@ -7,52 +7,58 @@ module.exports = {
         .setDescription('Withdraw your points (Min $2.00)')
         .addIntegerOption(o => o.setName('amount').setDescription('Points to withdraw (Min 200)').setRequired(true)),
 
-    run: async ({ interaction, message, args }) => {
-        const user = interaction ? interaction.user : message.author;
-        if (interaction) await interaction.deferReply();
+    run: async ({ interaction }) => {
+        // Safe defer reply to prevent timeout crashes
+        await interaction.deferReply({ ephemeral: true }); 
 
-        const amount = interaction ? interaction.options.getInteger('amount') : parseInt(args[0]);
+        const amount = interaction.options.getInteger('amount');
+        const userId = interaction.user.id;
 
         try {
-            // 1. Minimum Amount Check ($2 = 200 points)
+            // 1. Minimum Amount Check
             if (amount < 200) {
-                const minErr = new EmbedBuilder()
-                    .setAuthor({ name: ` Minimum Withdrawal`, iconURL: user.displayAvatarURL() })
-                    .setDescription(`❌ Minimum withdraw amount is  **200 points ($2.00)** .`)
-                    .setColor('#ff4b2b')
-                    .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() });
-                
-                return interaction ? interaction.editReply({ embeds: [minErr] }) : message.reply({ embeds: [minErr] });
+                return await interaction.editReply({ 
+                    content: `❌ Aap kam se kam **200 points ($2.00)** withdraw kar sakte hain.` 
+                });
             }
 
-            const profile = await UserProfile.findOne({ userId: user.id });
+            // 2. Database Fetch with Error Handling
+            let profile = await UserProfile.findOne({ userId });
+
+            // Agar user database mein nahi hai ya balance kam hai
             if (!profile || profile.balance < amount) {
-                return (interaction || message).reply("❌ Insufficient balance!");
+                const currentBal = profile ? profile.balance : 0;
+                return await interaction.editReply({ 
+                    content: `❌ Aapke paas itne points nahi hain! \n**Current Balance:** 🪙 ${currentBal}` 
+                });
             }
 
-            // 2. Stats Update
+            // 3. Stats Update
             profile.balance -= amount;
-            profile.withdrawals += amount;
-            profile.withdrawCount += 1;
+            profile.withdrawals = (profile.withdrawals || 0) + amount;
+            profile.withdrawCount = (profile.withdrawCount || 0) + 1;
             await profile.save();
 
-            // 3. Success Embed with Ticket Link
+            // 4. Success Embed
             const withdrawEmbed = new EmbedBuilder()
-                .setAuthor({ name: ` Withdrawal Requested`, iconURL: user.displayAvatarURL() })
+                .setAuthor({ name: `Withdrawal Requested`, iconURL: interaction.user.displayAvatarURL() })
                 .setDescription(
                     `✅ Successfully withdrawn **🪙 ${amount} points**.\n\n` +
                     `⚠️ **Next Step:**\n` +
                     `Please **make a ticket** in <#1453079406829375729> to receive your payment.`
                 )
                 .setColor('#2ecc71')
-                .setFooter({ text: '711 Bet', iconURL: user.client.user.displayAvatarURL() })
+                .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() })
                 .setTimestamp();
 
-            return interaction ? await interaction.editReply({ embeds: [withdrawEmbed] }) : await message.channel.send({ embeds: [withdrawEmbed] });
+            return await interaction.editReply({ embeds: [withdrawEmbed] });
             
         } catch (e) { 
-            console.error(e); 
-            if (interaction) interaction.editReply("An error occurred.");
+            console.error("WITHDRAW_ERROR:", e);
+            // Crash hone se bachaane ke liye catch block
+            if (interaction.deferred) {
+                return await interaction.editReply({ content: "❌ Database error! Please try again later." });
+            }
         }
     },
 };

@@ -4,56 +4,45 @@ const UserProfile = require("../../schemas/UserProfile");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("leaderboard")
-        .setDescription("Showing top 10 Balance!"),
+        .setDescription("View top wagerers in the server"),
 
-    run: async ({ interaction, message }) => {
-        if (interaction) await interaction.deferReply();
+    run: async ({ interaction }) => {
+        await interaction.deferReply();
 
         try {
-            // Top 10 users with highest balance fetch karein
-            const topUsers = await UserProfile.find().sort({ balance: -1 }).limit(10);
+            // Top 10 users by wageredAmount
+            const topWagerers = await UserProfile.find()
+                .sort({ wageredAmount: -1 })
+                .limit(10);
 
-            if (!topUsers.length) {
-                return (interaction || message).reply("❌ No data available.");
+            if (!topWagerers.length) {
+                return interaction.editReply("Leaderboard abhi khali hai!");
             }
 
-            let description = "";
-            for (let i = 0; i < topUsers.length; i++) {
-                const userData = topUsers[i];
-                const userObj = await (interaction || message).client.users.fetch(userData.userId).catch(() => null);
-                const userName = userObj ? userObj.username : "Unknown";
-                
-                // RacksGG Style Ranking Icons
-                const rank = i + 1;
-                let rankStyle = `**${rank}**`;
-                if (rank === 1) rankStyle = "🥇";
-                else if (rank === 2) rankStyle = "🥈";
-                else if (rank === 3) rankStyle = "🥉";
-
-                description += `${rankStyle}  **${userName}** —  \`🪙 ${userData.balance.toLocaleString()} points\`\n`;
-            }
-
-            // Image jaisa Embed Design
-            const lbEmbed = new EmbedBuilder()
-                .setAuthor({ 
-                    name: `crushmminfo: Leaderboard`, 
-                    iconURL: (interaction || message).client.user.displayAvatarURL() 
-                })
-                .setTitle("Showing top 10 Balance Users") // Header match
-                .setDescription(description)
-                .setColor("#2b2d31") // Dark background match
-                .setFooter({ 
-                    text: "711 Bet • Resets in 5 hours", 
-                    iconURL: (interaction || message).client.user.displayAvatarURL() 
-                })
+            const leaderboardEmbed = new EmbedBuilder()
+                .setAuthor({ name: '711 Bet: Top Wagerers', iconURL: interaction.guild.iconURL() })
+                .setColor('#f1c40f') // Gold Color
+                .setFooter({ text: '711 Bet • High Rollers Only' })
                 .setTimestamp();
 
-            if (interaction) return await interaction.editReply({ embeds: [lbEmbed] });
-            return await message.channel.send({ embeds: [lbEmbed] });
+            let description = "";
+            for (let i = 0; i < topWagerers.length; i++) {
+                const user = await interaction.client.users.fetch(topWagerers[i].userId).catch(() => null);
+                const tag = user ? user.username : "Unknown User";
+                const amount = topWagerers[i].wageredAmount || 0;
+                
+                // Top 3 ke liye emojis
+                const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `**#${i + 1}**`;
+                description += `${medal} **${tag}** — 🪙 \`${amount.toFixed(2)}\` wagered\n`;
+            }
+
+            leaderboardEmbed.setDescription(description || "No data available.");
+
+            return await interaction.editReply({ embeds: [leaderboardEmbed] });
 
         } catch (error) {
             console.error(error);
-            if (interaction) interaction.editReply("Error loading leaderboard.");
+            return interaction.editReply("Leaderboard load karne mein error aaya.");
         }
     },
 };

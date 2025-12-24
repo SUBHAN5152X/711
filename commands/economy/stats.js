@@ -4,52 +4,22 @@ const UserProfile = require("../../schemas/UserProfile");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("stats")
-        .setDescription("View your or another user's stats")
-        .addUserOption(opt => opt.setName("user").setDescription("User to view stats for")),
+        .setDescription("View your betting stats"),
 
-    run: async ({ interaction, message }) => {
-        const targetUser = (interaction ? interaction.options.getUser("user") : message.mentions.users.first()) || (interaction ? interaction.user : message.author);
-        if (interaction) await interaction.deferReply();
+    run: async ({ interaction }) => {
+        const profile = await UserProfile.findOne({ userId: interaction.user.id });
+        if (!profile) return interaction.reply("Khelna shuru karo pehle!");
 
-        try {
-            const profile = await UserProfile.findOne({ userId: targetUser.id }) || { balance: 0, withdrawals: 0, withdrawCount: 0, wins: 0, winAmount: 0, tipsSent: 0, tipsReceived: 0 };
+        const embed = new EmbedBuilder()
+            .setTitle(`${interaction.user.username}'s Stats`)
+            .addFields(
+                { name: '💰 Balance', value: `🪙 ${profile.balance.toFixed(2)}`, inline: true },
+                { name: '🔥 Total Wagered', value: `🪙 ${profile.wageredAmount || 0}`, inline: true },
+                { name: '🏆 Total Wins', value: `${profile.wins || 0}`, inline: true },
+                { name: '📈 Pure Profit', value: `🪙 ${profile.winAmount || 0}`, inline: true }
+            )
+            .setColor('#3498db');
 
-            // USD Conversion (Assuming 100 points = 1$)
-            const toUSD = (pts) => (pts / 100).toFixed(2);
-
-            const statsEmbed = new EmbedBuilder()
-                .setAuthor({ 
-                    name: `crushmminfo: Stats for ${targetUser.username}`, 
-                    iconURL: targetUser.displayAvatarURL() 
-                })
-                .setColor("#2b2d31") // Dark Theme
-                .addFields(
-                    { 
-                        name: '💳 Withdrawals', 
-                        value: `**${profile.withdrawals} points** (~$${toUSD(profile.withdrawals)}) (**${profile.withdrawCount} times**)` 
-                    },
-                    { 
-                        name: '🏆 Won', 
-                        value: `**${profile.wins} games** and earned **${profile.winAmount.toFixed(2)} points** (~$${toUSD(profile.winAmount)})` 
-                    },
-                    { 
-                        name: '💸 Tips', 
-                        value: `Tips sent: **${profile.tipsSent} points**\nTips received: **${profile.tipsReceived} points**` 
-                    }
-                )
-                .setFooter({ 
-                    text: "711 Bet", 
-                    iconURL: (interaction || message).client.user.displayAvatarURL() 
-                })
-                .setTimestamp();
-
-            if (interaction) return await interaction.editReply({ embeds: [statsEmbed] });
-            return await message.channel.send({ embeds: [statsEmbed] });
-
-        } catch (error) {
-            console.error(error);
-            const errMsg = "❌ Stats load karne mein error aaya.";
-            return interaction ? interaction.editReply(errMsg) : message.reply(errMsg);
-        }
-    },
+        return interaction.reply({ embeds: [embed] });
+    }
 };
