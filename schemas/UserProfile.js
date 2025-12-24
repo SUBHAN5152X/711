@@ -13,6 +13,8 @@ const userProfileSchema = new Schema({
     tipsSent: { type: Number, default: 0 },
     tipsReceived: { type: Number, default: 0 },
     usedBy: { type: [String], default: [] },
+    invites: { type: Number, default: 0 },
+    inviterId: { type: String }
 });
 
 module.exports = model("UserProfile", userProfileSchema);

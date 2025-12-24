@@ -4,9 +4,11 @@ const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
-const Giveaway = require("./schemas/Giveaway"); // Giveaway Schema import karein
+const Giveaway = require("./schemas/Giveaway");
+const UserProfile = require("./schemas/UserProfile"); // Ensure path is correct
 
 const PREFIX = process.env.PREFIX || "-";
+const invites = new Map(); // Global map for tracking
 
 const client = new Client({
     intents: [
@@ -14,15 +16,57 @@ const client = new Client({
         IntentsBitField.Flags.GuildMembers,
         IntentsBitField.Flags.GuildMessages,
         IntentsBitField.Flags.MessageContent,
+        IntentsBitField.Flags.GuildInvites, // Added for invite tracking
     ],
 });
 
 client.commands = new Collection();
 
 /* ================================
+    INVITE TRACKER LOGIC
+================================ */
+client.on("ready", async () => {
+    // Cache all invites for each guild
+    client.guilds.cache.forEach(async (guild) => {
+        try {
+            const firstInvites = await guild.invites.fetch();
+            invites.set(guild.id, new Map(firstInvites.map((inv) => [inv.code, inv.uses])));
+            console.log(`✅ Cached ${firstInvites.size} invites for: ${guild.name}`);
+        } catch (err) {
+            console.log(`❌ Invite Cache Error for ${guild.name}:`, err.message);
+        }
+    });
+});
+
+client.on("guildMemberAdd", async (member) => {
+    try {
+        const newInvites = await member.guild.invites.fetch();
+        const oldInvites = invites.get(member.guild.id);
+        const invite = newInvites.find((i) => i.uses > oldInvites.get(i.code));
+
+        if (invite) {
+            // Update Database: Increment inviter's count and save inviter ID for the new member
+            await UserProfile.findOneAndUpdate(
+                { userId: invite.inviter.id },
+                { $inc: { invites: 1 } },
+                { upsert: true }
+            );
+            await UserProfile.findOneAndUpdate(
+                { userId: member.id },
+                { inviterId: invite.inviter.id },
+                { upsert: true }
+            );
+        }
+        // Refresh cache
+        invites.set(member.guild.id, new Map(newInvites.map((inv) => [inv.code, inv.uses])));
+    } catch (err) {
+        console.error("Member Join Invite Track Error:", err);
+    }
+});
+
+/* ================================
     GIVEAWAY AUTO-END CHECKER
 ================================ */
-// Ye har 10 second mein check karega ki koi giveaway khatam toh nahi hua
 async function checkGiveaways() {
     const now = new Date();
     const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
@@ -31,67 +75,14 @@ async function checkGiveaways() {
         try {
             const channel = await client.channels.fetch(data.channelId);
             const msg = await channel.messages.fetch(data.messageId);
-            
-            // Winners pick karne ka logic (Helper function)
             await endGiveawayLogic(client, data, msg);
         } catch (err) {
-            console.error("Giveaway end error:", err);
-            data.ended = true; // Error pe bhi true kar rahe taaki loop na fase
+            data.ended = true; 
             await data.save();
         }
     }
 }
 
-/* ================================
-    INTERACTION HANDLER
-================================ */
-client.on("interactionCreate", async (interaction) => {
-    
-    // 1. Autocomplete
-    if (interaction.isAutocomplete()) {
-        const command = client.commands.get(interaction.commandName);
-        if (command?.autocomplete) await command.autocomplete({ interaction, client });
-        return;
-    }
-
-    // 2. Buttons
-    if (interaction.isButton()) {
-        // --- GIVEAWAY JOIN BUTTON ---
-        if (interaction.customId === "ga_join") {
-            const data = await Giveaway.findOne({ messageId: interaction.message.id });
-            if (!data || data.ended) return interaction.reply({ content: "❌ Ye giveaway khatam ho chuka hai!", flags: [64] });
-
-            if (data.participants.includes(interaction.user.id)) {
-                return interaction.reply({ content: "❌ Aap pehle hi join kar chuke ho!", flags: [64] });
-            }
-
-            data.participants.push(interaction.user.id);
-            await data.save();
-            return interaction.reply({ content: "✅ Giveaway joined! Good luck!", flags: [64] });
-        }
-
-        // --- VERIFICATION SYSTEM ---
-        if (interaction.customId === "verify_btn") {
-            const roleId = "1453285948581216356";
-            const sixtyDays = 60 * 24 * 60 * 60 * 1000;
-            const accountAge = Date.now() - interaction.member.user.createdTimestamp;
-
-            if (accountAge < sixtyDays) {
-                return interaction.reply({ content: "❌ Account 60 din purana hona chahiye.", flags: [64] });
-            }
-
-            try {
-                const role = interaction.guild.roles.cache.get(roleId);
-                await interaction.member.roles.add(role);
-                return interaction.reply({ content: "✅ Verified!", flags: [64] });
-            } catch (err) {
-                return interaction.reply({ content: "❌ Role Error!", flags: [64] });
-            }
-        }
-    }
-});
-
-// Helper function to pick winners and edit embed
 async function endGiveawayLogic(client, data, msg) {
     if (data.participants.length === 0) {
         data.ended = true;
@@ -114,10 +105,58 @@ async function endGiveawayLogic(client, data, msg) {
 
     await msg.edit({ embeds: [endEmbed], components: [] });
     await msg.channel.send(`🎊 Congratulations ${winners.join(", ")}! You won **${data.prize}**!`);
-
     data.ended = true;
     await data.save();
 }
+
+/* ================================
+    INTERACTION HANDLER
+================================ */
+client.on("interactionCreate", async (interaction) => {
+    if (interaction.isAutocomplete()) {
+        const command = client.commands.get(interaction.commandName);
+        if (command?.autocomplete) await command.autocomplete({ interaction, client });
+        return;
+    }
+
+    if (interaction.isButton()) {
+        if (interaction.customId === "ga_join") {
+            const data = await Giveaway.findOne({ messageId: interaction.message.id });
+            if (!data || data.ended) return interaction.reply({ content: "❌ Ye giveaway khatam ho chuka hai!", flags: [64] });
+            if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ Aap pehle hi join kar chuke ho!", flags: [64] });
+
+            data.participants.push(interaction.user.id);
+            await data.save();
+            return interaction.reply({ content: "✅ Joined successfully!", flags: [64] });
+        }
+
+        if (interaction.customId === "verify_btn") {
+            const roleId = "1453285948581216356";
+            const sixtyDays = 60 * 24 * 60 * 60 * 1000;
+            const accountAge = Date.now() - interaction.member.user.createdTimestamp;
+
+            if (accountAge < sixtyDays) return interaction.reply({ content: "❌ Account must be 60 days old.", flags: [64] });
+
+            try {
+                const role = interaction.guild.roles.cache.get(roleId);
+                await interaction.member.roles.add(role);
+                return interaction.reply({ content: "✅ Verified!", flags: [64] });
+            } catch (err) {
+                return interaction.reply({ content: "❌ Role Error! Check Hierarchy.", flags: [64] });
+            }
+        }
+    }
+});
+
+/* ================================
+    COMMAND HANDLER (DJS-COMMANDER)
+================================ */
+new CommandHandler({
+    client,
+    eventsPath: path.join(__dirname, "events"),
+    commandsPath: path.join(__dirname, "commands"),
+    guildId: process.env.GUILD_ID,
+});
 
 /* ================================
     DATABASE + LOGIN
@@ -127,17 +166,9 @@ async function endGiveawayLogic(client, data, msg) {
         mongoose.set('strictQuery', false);
         await mongoose.connect(process.env.MONGODB_URI);
         console.log("✅ Database Connected.");
-        
         await client.login(process.env.TOKEN);
-        console.log(`✅ Logged in as ${client.user.tag}`);
-
-        // Bot online aate hi checker shuru karein
         setInterval(checkGiveaways, 10000); 
-
     } catch (error) {
         console.error("Login Error:", error);
     }
 })();
-
-// Command Handler and Prefix logic (Same as yours)
-// ...
