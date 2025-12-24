@@ -2,7 +2,6 @@ require("dotenv/config");
 const { Client, IntentsBitField, Collection, EmbedBuilder } = require("discord.js");
 const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
-const fs = require("fs");
 const path = require("path");
 const Giveaway = require("./schemas/Giveaway");
 const UserProfile = require("./schemas/UserProfile");
@@ -11,7 +10,7 @@ const PREFIX = process.env.PREFIX || "-";
 const invites = new Map();
 
 /* ================================
-    EXPRESS SERVER (For 24/7 Render)
+    EXPRESS SERVER (For Render 24/7)
 ================================ */
 const express = require('express');
 const app = express();
@@ -22,7 +21,6 @@ app.listen(port, () => console.log(`✅ Web server active on port ${port}`));
 /* ================================
     CHANNEL CONFIGURATION
 ================================ */
-// In channels mein bot koi command accept nahi karega
 const RESTRICTED_CHANNELS = [
     "1453274442548514860", // General Chat ID
     "1453327792119742524"  // Media ID
@@ -44,16 +42,15 @@ client.commands = new Collection();
     READY EVENT (Cleanup & Invites)
 ================================ */
 client.on("ready", async () => {
-    // 1. CLEAR GHOST COMMANDS (Removes deleted commands like /mines)
     try {
         console.log("🔄 Refreshing global slash commands...");
+        // Clearing ghost commands safely inside ready event
         await client.application.commands.set([]); 
         console.log("✅ Ghost commands cleared from Discord!");
     } catch (error) {
         console.error("Cleanup error:", error);
     }
 
-    // 2. CACHE INVITES
     client.guilds.cache.forEach(async (guild) => {
         try {
             const firstInvites = await guild.invites.fetch();
@@ -67,13 +64,13 @@ client.on("ready", async () => {
 });
 
 /* ================================
-    INVITE TRACKER (On Member Join)
+    INVITE TRACKER
 ================================ */
 client.on("guildMemberAdd", async (member) => {
     try {
         const newInvites = await member.guild.invites.fetch();
         const oldInvites = invites.get(member.guild.id);
-        const invite = newInvites.find((i) => i.uses > oldInvites.get(i.code));
+        const invite = newInvites.find((i) => i.uses > (oldInvites?.get(i.code) || 0));
 
         if (invite) {
             await UserProfile.findOneAndUpdate(
@@ -94,7 +91,7 @@ client.on("guildMemberAdd", async (member) => {
 });
 
 /* ================================
-    INTERACTION HANDLER (Slash & Buttons)
+    INTERACTION HANDLER
 ================================ */
 client.on("interactionCreate", async (interaction) => {
     if (interaction.isAutocomplete()) {
@@ -104,28 +101,25 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.isChatInputCommand()) {
-        // CHANNEL RESTRICTION CHECK
         if (RESTRICTED_CHANNELS.includes(interaction.channelId)) {
             return interaction.reply({ 
-                content: "❌ Commands are disabled here. Please use the designated Game Rooms.", 
+                content: "❌ Commands are disabled here. Please use the Game Rooms.", 
                 flags: [64] 
             });
         }
     }
 
     if (interaction.isButton()) {
-        // Giveaway Join
         if (interaction.customId === "ga_join") {
             const data = await Giveaway.findOne({ messageId: interaction.message.id });
             if (!data || data.ended) return interaction.reply({ content: "❌ This giveaway has ended!", flags: [64] });
-            if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ You have already joined!", flags: [64] });
+            if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ Already joined!", flags: [64] });
 
             data.participants.push(interaction.user.id);
             await data.save();
             return interaction.reply({ content: "✅ Successfully joined!", flags: [64] });
         }
 
-        // Verification
         if (interaction.customId === "verify_btn") {
             const roleId = "1453285948581216356";
             const sixtyDays = 60 * 24 * 60 * 60 * 1000;
@@ -145,19 +139,24 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 /* ================================
-    PREFIX MESSAGE HANDLER
+    GIVEAWAY MANAGER
 ================================ */
-client.on("messageCreate", async (message) => {
-    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
-    
-    // CHANNEL RESTRICTION CHECK
-    if (RESTRICTED_CHANNELS.includes(message.channelId)) return;
-
-    // Command running logic here if you use prefix...
-});
+async function checkGiveaways() {
+    try {
+        const now = new Date();
+        const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
+        for (const data of endedGiveaways) {
+            data.ended = true;
+            await data.save();
+            // Logic to pick winner goes here
+        }
+    } catch (err) {
+        console.error("Giveaway Check Error:", err);
+    }
+}
 
 /* ================================
-    DJS-COMMANDER & STARTUP
+    STARTUP LOGIC (Fixes ESM/Require Crash)
 ================================ */
 new CommandHandler({
     client,
@@ -166,24 +165,16 @@ new CommandHandler({
     guildId: process.env.GUILD_ID,
 });
 
-async function checkGiveaways() {
-    const now = new Date();
-    const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
-    for (const data of endedGiveaways) {
-        try {
-            const channel = await client.channels.fetch(data.channelId);
-            const msg = await channel.messages.fetch(data.messageId);
-            // endGiveawayLogic helper needed here if not in separate file
-        } catch (err) { data.ended = true; await data.save(); }
-    }
-}
-
-(async () => {
+async function startBot() {
     try {
         mongoose.set('strictQuery', false);
         await mongoose.connect(process.env.MONGODB_URI);
         console.log("✅ Database Connected.");
         await client.login(process.env.TOKEN);
-        setInterval(checkGiveaways, 10000); 
-    } catch (error) { console.error("Login Error:", error); }
-})();
+        setInterval(checkGiveaways, 30000); 
+    } catch (error) {
+        console.error("Startup Error:", error);
+    }
+}
+
+startBot();
