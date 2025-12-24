@@ -6,6 +6,7 @@ const codeSchema = new Schema({
     createdBy: { type: String, required: true },
     redeemedBy: { type: [String], default: [] },
     expiresAt: { type: Date, default: null },
+    allowedRoleId: { type: String, default: null },
     allowedRoles: { type: [String], default: [] }, // store role IDs
 });
 

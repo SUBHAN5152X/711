@@ -1,58 +1,68 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require("discord.js");
 const Code = require("../../schemas/Code");
-const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(",") : [];
+const ms = require("ms"); // Time parsing ke liye
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("create-code")
-        .setDescription("Create a redeemable code (Admin only)")
-        .addStringOption(opt => opt.setName("code").setDescription("Code string").setRequired(true))
-        .addIntegerOption(opt => opt.setName("amount").setDescription("Coins reward").setRequired(true))
-        .addIntegerOption(opt => opt.setName("maxuses").setDescription("How many people can use it").setRequired(false))
-        .addStringOption(opt => opt.setName("expiry").setDescription("Expiry (YYYY-MM-DD)").setRequired(false)),
+        .setDescription("Create a redeemable promo code")
+        .addStringOption(opt => opt.setName("code").setDescription("The code string (e.g. WINNER)").setRequired(true))
+        .addIntegerOption(opt => opt.setName("amount").setDescription("Coins reward amount").setRequired(true))
+        .addIntegerOption(opt => opt.setName("maxuses").setDescription("Total uses allowed").setRequired(false))
+        .addStringOption(opt => opt.setName("duration").setDescription("Duration (e.g. 10m, 1h, 1d)").setRequired(false))
+        .addRoleOption(opt => opt.setName("allowed_role").setDescription("Only users with this role can redeem").setRequired(false))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     run: async ({ interaction }) => {
-        if (!ADMIN_IDS.includes(interaction.user.id)) {
-            return await interaction.reply({ content: "❌ No Permission.", ephemeral: true });
-        }
-
         const codeStr = interaction.options.getString("code").toUpperCase();
         const amount = interaction.options.getInteger("amount");
-        const maxUses = interaction.options.getInteger("maxuses") || 100; // Default 100 uses
-        const expiryInput = interaction.options.getString("expiry");
-        const expiry = expiryInput ? new Date(expiryInput) : null;
+        const maxUses = interaction.options.getInteger("maxuses") || 100;
+        const durationInput = interaction.options.getString("duration");
+        const allowedRole = interaction.options.getRole("allowed_role");
+
+        // Time parsing logic
+        let expiry = null;
+        if (durationInput) {
+            const milliseconds = ms(durationInput);
+            if (!milliseconds) {
+                return interaction.reply({ content: "❌ Invalid duration format! Use: `10m`, `1h`, or `1d`.", flags: [64] });
+            }
+            expiry = new Date(Date.now() + milliseconds);
+        }
 
         try {
             const existing = await Code.findOne({ code: codeStr });
-            if (existing) return await interaction.reply({ content: "❌ Code already exists!", ephemeral: true });
+            if (existing) return interaction.reply({ content: "❌ This code already exists!", flags: [64] });
 
+            // Database mein data save karo
             await Code.create({
                 code: codeStr,
                 amount,
                 createdBy: interaction.user.id,
                 expiresAt: expiry,
-                maxUses: maxUses // Make sure to add this field in your Code schema
+                maxUses: maxUses,
+                allowedRoleId: allowedRole ? allowedRole.id : null // Schema mein ye field check kar lena
             });
 
-            // RoBets Style Embed
-            const roBetsEmbed = new EmbedBuilder()
-                .setAuthor({ name: '✅ Promo Code Created', iconURL: interaction.client.user.displayAvatarURL() })
-                .setColor('#2ecc71') // RoBets Green
+            const successEmbed = new EmbedBuilder()
+                .setAuthor({ name: 'Promo Code Created', iconURL: interaction.guild.iconURL() })
+                .setColor('#2ecc71')
                 .addFields(
-                    { name: 'Code', value: `**${codeStr}**`, inline: false },
-                    { name: 'Amount', value: `$${amount.toFixed(2)}`, inline: true },
+                    { name: 'Code', value: `\`${codeStr}\``, inline: true },
+                    { name: 'Reward', value: `🪙 ${amount}`, inline: true },
                     { name: 'Max Uses', value: `${maxUses}`, inline: true },
-                    { name: 'Expiry', value: `${expiry ? expiry.toDateString() : 'Never'}`, inline: true }
+                    { name: 'Duration', value: `${durationInput || 'Permanent'}`, inline: true },
+                    { name: 'Allowed Role', value: `${allowedRole ? allowedRole : 'Everyone'}`, inline: true }
                 )
-                .setDescription(`\nUsers can redeem with: \`/redeem ${codeStr}\``)
-                .setFooter({ text: '711 Bet', iconURL: interaction.client.user.displayAvatarURL() })
+                .setDescription(`\n**Redeem Command:** \`/redeem code:${codeStr}\``)
+                .setFooter({ text: '711 Bet • Secure Systems' })
                 .setTimestamp();
 
-            await interaction.reply({ embeds: [roBetsEmbed] });
+            await interaction.reply({ embeds: [successEmbed] });
 
         } catch (err) {
             console.error(err);
-            await interaction.reply({ content: "Error creating code.", ephemeral: true });
+            await interaction.reply({ content: "❌ Error while creating the code in database.", flags: [64] });
         }
     },
 };

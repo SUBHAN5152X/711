@@ -1,6 +1,6 @@
 require("dotenv/config");
 
-const { Client, IntentsBitField } = require("discord.js");
+const { Client, IntentsBitField, Collection } = require("discord.js");
 const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
 const fs = require("fs");
@@ -8,6 +8,9 @@ const path = require("path");
 
 const PREFIX = process.env.PREFIX || "-";
 
+/* ================================
+    EXPRESS SERVER (For 24/7)
+================================ */
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 10000;
@@ -20,6 +23,9 @@ app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
 
+/* ================================
+    CLIENT INITIALIZATION
+================================ */
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
@@ -29,31 +35,21 @@ const client = new Client({
     ],
 });
 
+client.commands = new Collection(); // Map ki jagah Collection use karna better hai
+
 /* ================================
-   PREFIX COMMAND LOADER (SAFE)
+    COMMAND LOADER (Prefix & Autocomplete)
 ================================ */
-
-client.commands = new Map();
-
 const commandsPath = path.join(__dirname, "commands");
-const entries = fs.readdirSync(commandsPath, { withFileTypes: true });
 
-for (const entry of entries) {
-    // commands/ping.js, commands/rules.js
-    if (entry.isFile() && entry.name.endsWith(".js")) {
-        const command = require(path.join(commandsPath, entry.name));
-        if (command?.data?.name) {
-            client.commands.set(command.data.name, command);
-        }
-    }
-
-    // commands/economy/balance.js, commands/admin/set-prefix.js
-    if (entry.isDirectory()) {
-        const folderPath = path.join(commandsPath, entry.name);
-        const files = fs.readdirSync(folderPath).filter(f => f.endsWith(".js"));
-
-        for (const file of files) {
-            const command = require(path.join(folderPath, file));
+function loadCommands(dir) {
+    const files = fs.readdirSync(dir, { withFileTypes: true });
+    for (const file of files) {
+        const fullPath = path.join(dir, file.name);
+        if (file.isDirectory()) {
+            loadCommands(fullPath);
+        } else if (file.name.endsWith(".js")) {
+            const command = require(fullPath);
             if (command?.data?.name) {
                 client.commands.set(command.data.name, command);
             }
@@ -61,10 +57,31 @@ for (const entry of entries) {
     }
 }
 
-/* ================================
-   PREFIX MESSAGE HANDLER
-================================ */
+loadCommands(commandsPath);
 
+/* ================================
+    INTERACTION HANDLER (Slash + Autocomplete)
+================================ */
+client.on("interactionCreate", async (interaction) => {
+    // 1. Handle Autocomplete requests
+    if (interaction.isAutocomplete()) {
+        const command = client.commands.get(interaction.commandName);
+        if (!command || !command.autocomplete) return;
+
+        try {
+            await command.autocomplete({ interaction, client });
+        } catch (error) {
+            console.error("Autocomplete Error:", error);
+        }
+        return;
+    }
+
+    // 2. Chat Input Commands handled by djs-commander below
+});
+
+/* ================================
+    PREFIX MESSAGE HANDLER
+================================ */
 client.on("messageCreate", async message => {
     if (message.author.bot || !message.guild) return;
     if (!message.content.startsWith(PREFIX)) return;
@@ -78,15 +95,14 @@ client.on("messageCreate", async message => {
     try {
         await command.run({ message, args, client });
     } catch (error) {
-        console.error(error);
-        message.channel.send("There was an error executing that command.");
+        console.error("Prefix Command Error:", error);
+        message.channel.send("❌ There was an error executing that command.");
     }
 });
 
 /* ================================
-   SLASH COMMAND HANDLER
+    COMMAND HANDLER (DJS-COMMANDER)
 ================================ */
-
 new CommandHandler({
     client,
     eventsPath: path.join(__dirname, "events"),
@@ -95,11 +111,15 @@ new CommandHandler({
 });
 
 /* ================================
-   DATABASE + LOGIN
+    DATABASE + LOGIN
 ================================ */
-
 (async () => {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log("Connected to the database.");
-    await client.login(process.env.TOKEN);
+    try {
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log("✅ Connected to the database.");
+        await client.login(process.env.TOKEN);
+        console.log(`✅ Logged in as ${client.user.tag}`);
+    } catch (error) {
+        console.error("Login Error:", error);
+    }
 })();
