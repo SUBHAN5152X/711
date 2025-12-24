@@ -1,31 +1,13 @@
 require("dotenv/config");
-
-const { Client, IntentsBitField, Collection, EmbedBuilder } = require("discord.js");
+const { Client, IntentsBitField, Collection, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { CommandHandler } = require("djs-commander");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const UserProfile = require("./schemas/UserProfile"); // Path check kar lena
 
 const PREFIX = process.env.PREFIX || "-";
 
-/* ================================
-    EXPRESS SERVER (For 24/7)
-================================ */
-const express = require('express');
-const app = express();
-const port = process.env.PORT || 10000;
-
-app.get('/', (req, res) => {
-  res.send('711 Bet Bot is Online!');
-});
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
-
-/* ================================
-    CLIENT INITIALIZATION
-================================ */
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
@@ -36,125 +18,141 @@ const client = new Client({
 });
 
 client.commands = new Collection();
+const towerGames = new Map(); // Game state store karne ke liye
 
-/* ================================
-    COMMAND LOADER
-================================ */
-const commandsPath = path.join(__dirname, "commands");
-
-function loadCommands(dir) {
-    const files = fs.readdirSync(dir, { withFileTypes: true });
-    for (const file of files) {
-        const fullPath = path.join(dir, file.name);
-        if (file.isDirectory()) {
-            loadCommands(fullPath);
-        } else if (file.name.endsWith(".js")) {
-            const command = require(fullPath);
-            if (command?.data?.name) {
-                client.commands.set(command.data.name, command);
-            }
-        }
-    }
-}
-
-loadCommands(commandsPath);
+// Game Config (Rack.gg Style Multipliers)
+const TOWER_CONFIG = {
+    easy: { tiles: 3, bombs: 1, mult: 1.42 },
+    med: { tiles: 2, bombs: 1, mult: 1.90 },
+    hard: { tiles: 3, bombs: 2, mult: 2.82 },
+    exp: { tiles: 4, bombs: 3, mult: 3.75 }
+};
 
 /* ================================
     INTERACTION HANDLER
 ================================ */
 client.on("interactionCreate", async (interaction) => {
     
-    // 1. Handle Autocomplete requests (For /delete-code etc.)
+    // 1. Autocomplete
     if (interaction.isAutocomplete()) {
         const command = client.commands.get(interaction.commandName);
-        if (!command || !command.autocomplete) return;
-
-        try {
-            await command.autocomplete({ interaction, client });
-        } catch (error) {
-            console.error("Autocomplete Error:", error);
-        }
+        if (command?.autocomplete) await command.autocomplete({ interaction, client });
         return;
     }
 
-    // 2. Handle Verification Button (Anti-Alt Logic)
-    if (interaction.isButton() && interaction.customId === "verify_btn") {
-        const member = interaction.member;
-        const roleId = "1453285948581216356"; // Teri di hui Role ID
-        const sixtyDays = 60 * 24 * 60 * 60 * 1000; // 60 Din milliseconds mein
-        const accountAge = Date.now() - member.user.createdTimestamp;
+    // 2. Buttons Handler
+    if (interaction.isButton()) {
+        const customId = interaction.customId;
 
-        // Check if account is older than 60 days
-        if (accountAge < sixtyDays) {
-            const remainingDays = Math.ceil((sixtyDays - accountAge) / (1000 * 60 * 60 * 24));
-            return interaction.reply({ 
-                content: `❌ **Verification Failed:** Your account must be at least **60 days old**. Please try again in **${remainingDays} days**.`, 
-                flags: [64] 
-            });
+        // --- VERIFICATION SYSTEM ---
+        if (customId === "verify_btn") {
+            const roleId = "1453285948581216356";
+            const sixtyDays = 60 * 24 * 60 * 60 * 1000;
+            const accountAge = Date.now() - interaction.member.user.createdTimestamp;
+
+            if (accountAge < sixtyDays) {
+                return interaction.reply({ content: `❌ Account must be 60 days old.`, flags: [64] });
+            }
+            const role = interaction.guild.roles.cache.get(roleId);
+            try {
+                await interaction.member.roles.add(role);
+                return interaction.reply({ content: "✅ Verified!", flags: [64] });
+            } catch (err) {
+                return interaction.reply({ content: "❌ Role Hierarchy Error!", flags: [64] });
+            }
         }
 
-        const role = interaction.guild.roles.cache.get(roleId);
-        if (!role) return interaction.reply({ content: "❌ Error: Verified role not found. Contact Admin.", flags: [64] });
+        // --- TOWERS GAME ENGINE ---
+        if (customId.startsWith("tw_") || customId.startsWith("tile_") || customId === "tw_cashout") {
+            
+            // A. Start Game (Difficulty Selection)
+            if (customId.startsWith("tw_")) {
+                const [, diff, bet] = customId.split("_");
+                const amount = parseInt(bet);
 
-        try {
-            await member.roles.add(role);
-            return interaction.reply({ 
-                content: "✅ **Success:** Your account is verified! You now have full access to the server.", 
-                flags: [64] 
-            });
-        } catch (err) {
-            console.error(err);
-            return interaction.reply({ 
-                content: "❌ **Permission Error:** Make sure my bot role is **ABOVE** the 'Verified' role in Server Settings.", 
-                flags: [64] 
-            });
+                let profile = await UserProfile.findOne({ userId: interaction.user.id });
+                if (profile.balance < amount) return interaction.reply({ content: "Balance low!", flags: [64] });
+
+                profile.balance -= amount;
+                await profile.save();
+
+                towerGames.set(interaction.user.id, {
+                    bet: amount,
+                    diff: diff,
+                    floor: 1,
+                    multiplier: 1.0,
+                    history: []
+                });
+
+                return renderTower(interaction, interaction.user.id);
+            }
+
+            // B. Tile Selection (Playing)
+            const game = towerGames.get(interaction.user.id);
+            if (!game) return interaction.reply({ content: "No active game!", flags: [64] });
+
+            if (customId.startsWith("tile_")) {
+                const config = TOWER_CONFIG[game.diff];
+                const choice = parseInt(customId.split("_")[1]);
+                const bombTile = Math.floor(Math.random() * config.tiles) + 1;
+
+                if (choice === bombTile && config.bombs >= 1) { // Loss
+                    towerGames.delete(interaction.user.id);
+                    return interaction.update({
+                        embeds: [new EmbedBuilder().setTitle("💥 BOOM!").setDescription(`You hit a bomb on Floor ${game.floor}!\nLost: **🪙 ${game.bet}**`).setColor("#ff4b2b")],
+                        components: []
+                    });
+                } else { // Win Floor
+                    game.multiplier *= config.mult;
+                    game.floor += 1;
+                    return renderTower(interaction, interaction.user.id);
+                }
+            }
+
+            // C. Cashout
+            if (customId === "tw_cashout") {
+                const winnings = Math.floor(game.bet * game.multiplier);
+                let profile = await UserProfile.findOne({ userId: interaction.user.id });
+                profile.balance += winnings;
+                await profile.save();
+
+                towerGames.delete(interaction.user.id);
+                return interaction.update({
+                    embeds: [new EmbedBuilder().setTitle("💰 CASHOUT!").setDescription(`You climbed to floor ${game.floor - 1}!\nWon: **🪙 ${winnings.toLocaleString()}**`).setColor("#2ecc71")],
+                    components: []
+                });
+            }
         }
     }
 });
 
-/* ================================
-    PREFIX MESSAGE HANDLER
-================================ */
-client.on("messageCreate", async message => {
-    if (message.author.bot || !message.guild) return;
-    if (!message.content.startsWith(PREFIX)) return;
+// Tower UI Renderer
+async function renderTower(interaction, userId) {
+    const game = towerGames.get(userId);
+    const config = TOWER_CONFIG[game.diff];
+    const winnings = Math.floor(game.bet * game.multiplier);
 
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: "Tower Climb", iconURL: interaction.user.displayAvatarURL() })
+        .setDescription(`### Floor: ${game.floor}\nMulti: **${game.multiplier.toFixed(2)}x**\nPending: **🪙 ${winnings.toLocaleString()}**`)
+        .setColor("#2b2d31")
+        .setFooter({ text: "Choose a tile to climb higher!" });
 
-    const command = client.commands.get(commandName);
-    if (!command) return;
-
-    try {
-        await command.run({ message, args, client });
-    } catch (error) {
-        console.error("Prefix Command Error:", error);
-        message.channel.send("❌ There was an error executing that command.");
+    const row = new ActionRowBuilder();
+    for (let i = 1; i <= config.tiles; i++) {
+        row.addComponents(new ButtonBuilder().setCustomId(`tile_${i}`).setLabel(`Tile ${i}`).setStyle(ButtonStyle.Secondary));
     }
-});
 
-/* ================================
-    COMMAND HANDLER (DJS-COMMANDER)
-================================ */
-new CommandHandler({
-    client,
-    eventsPath: path.join(__dirname, "events"),
-    commandsPath: path.join(__dirname, "commands"),
-    guildId: process.env.GUILD_ID,
-});
+    const ctrl = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("tw_cashout").setLabel(`Cashout (${winnings})`).setStyle(ButtonStyle.Success).setDisabled(game.floor === 1)
+    );
 
-/* ================================
-    DATABASE + LOGIN
-================================ */
-(async () => {
-    try {
-        mongoose.set('strictQuery', false);
-        await mongoose.connect(process.env.MONGODB_URI);
-        console.log("✅ Connected to the database.");
-        
-        await client.login(process.env.TOKEN);
-        console.log(`✅ Logged in as ${client.user.tag}`);
-    } catch (error) {
-        console.error("Login Error:", error);
+    if (interaction.replied || interaction.deferred) {
+        await interaction.editReply({ embeds: [embed], components: [row, ctrl] });
+    } else {
+        await interaction.update({ embeds: [embed], components: [row, ctrl] });
     }
-})();
+}
+
+// Prefix & Express Server (Same as before)
+// ... (Tera purana code yahan niche continue hoga)
