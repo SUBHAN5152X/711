@@ -11,7 +11,8 @@ const userProfileSchema = new Schema({
     winAmount: { type: Number, default: 0 },
     wageredAmount: { type: Number, default: 0 },
     tipsSent: { type: Number, default: 0 },
-    tipsReceived: { type: Number, default: 0 }
+    tipsReceived: { type: Number, default: 0 },
+    usedBy: { type: [String], default: [] },
 });
 
 module.exports = model("UserProfile", userProfileSchema);
