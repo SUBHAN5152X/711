@@ -10,6 +10,18 @@ const UserProfile = require("./schemas/UserProfile"); // Ensure path is correct
 const PREFIX = process.env.PREFIX || "-";
 const invites = new Map(); // Global map for tracking
 
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+  res.send('711 Bet Bot is Online!');
+});
+
+app.listen(port, () => {
+  console.log(`✅ Web server port ${port} par chal raha hai.`);
+});
+
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
