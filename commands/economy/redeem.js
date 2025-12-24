@@ -1,84 +1,63 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const Code = require("../../schemas/Code");
 const UserProfile = require("../../schemas/UserProfile");
+const Code = require("../../schemas/Code"); // Make sure this path is correct
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("redeem")
-        .setDescription("Redeem a promo code for coins")
-        .addStringOption(opt => opt.setName("code").setDescription("Enter the code").setRequired(true)),
+        .setDescription("Redeem a gift code")
+        .addStringOption(option => 
+            option.setName("code")
+                .setDescription("Enter your code")
+                .setRequired(true)
+        ),
 
     run: async ({ interaction }) => {
-        const codeStr = interaction.options.getString("code").toUpperCase();
+        const codeInput = interaction.options.getString("code");
         const userId = interaction.user.id;
 
         try {
-            const promo = await Code.findOne({ code: codeStr });
+            // 1. Find the code in Database
+            const promo = await Code.findOne({ code: codeInput });
 
             if (!promo) {
-                return interaction.reply({ content: "❌ This code does not exist.", ephemeral: true });
+                return interaction.reply({ content: "❌ Invalid or expired code!", ephemeral: true });
             }
 
-            // 1. Array Initialization Check (Yeh zaroori hai crash rokne ke liye)
-            if (!promo.usedBy) {
-                promo.usedBy = [];
+            // 2. CHECK: If user has already redeemed this code
+            // Assuming your Code schema has a 'redeemedBy' array
+            if (promo.redeemedBy && promo.redeemedBy.includes(userId)) {
+                return interaction.reply({ content: "❌ You have already redeemed this code!", ephemeral: true });
             }
 
-            // 2. Expiry Check
-            if (promo.expiresAt && promo.expiresAt < new Date()) {
-                return interaction.reply({ content: "❌ This code has expired.", ephemeral: true });
+            // 3. Update User Balance
+            let profile = await UserProfile.findOne({ userId });
+            if (!profile) {
+                profile = new UserProfile({ userId, balance: 0 });
             }
 
-            // 3. Max Uses Check
-            if (promo.usedBy.length >= promo.maxUses) {
-                return interaction.reply({ content: "❌ This code has reached its maximum usage limit.", ephemeral: true });
-            }
-
-            // 4. Already Redeemed Check
-            if (promo.usedBy.includes(userId)) {
-                return interaction.reply({ content: "❌ You have already redeemed this code.", ephemeral: true });
-            }
-
-            // 5. Role Restriction Check
-            if (promo.allowedRoleId) {
-                if (!interaction.member.roles.cache.has(promo.allowedRoleId)) {
-                    return interaction.reply({ 
-                        content: `❌ You don't have the required role to use this code.`, 
-                        ephemeral: true 
-                    });
-                }
-            }
-
-            // --- REDEMPTION START ---
+            profile.balance += promo.amount;
             
-            // Add user to used list safely
-            promo.usedBy.push(userId);
-            await promo.save();
-
-            // Update user balance
-            const updatedProfile = await UserProfile.findOneAndUpdate(
-                { userId: userId },
-                { $inc: { balance: promo.amount } },
-                { upsert: true, new: true }
+            // 4. Update Code Data: Add user to redeemed list
+            // Using $push to prevent infinite redeems
+            await Code.findOneAndUpdate(
+                { code: codeInput },
+                { $push: { redeemedBy: userId } }
             );
 
-            const redeemEmbed = new EmbedBuilder()
-                .setTitle("🎉 Successful Redemption")
-                .setDescription(`Successfully added **🪙 ${promo.amount.toLocaleString()}** to your balance!`)
-                .addFields({ name: "New Balance", value: `🪙 ${updatedProfile.balance.toLocaleString()}` })
+            await profile.save();
+
+            const embed = new EmbedBuilder()
+                .setTitle("🎉 Code Redeemed!")
+                .setDescription(`Successfully added **🪙 ${promo.amount.toLocaleString()}** to your balance.`)
                 .setColor("#2ecc71")
-                .setTimestamp()
-                .setFooter({ text: "711 Bet • Casino System" });
+                .setTimestamp();
 
-            return await interaction.reply({ embeds: [redeemEmbed] });
+            return interaction.reply({ embeds: [embed] });
 
-        } catch (err) {
-            console.error("Redeem Command Error:", err);
-            // Check if interaction already replied
-            if (interaction.replied || interaction.deferred) {
-                return interaction.followUp({ content: "❌ An internal error occurred.", ephemeral: true });
-            }
-            return interaction.reply({ content: "❌ An internal error occurred.", ephemeral: true });
+        } catch (error) {
+            console.error("Redeem Error:", error);
+            return interaction.reply({ content: "⚠️ Something went wrong while redeeming!", ephemeral: true });
         }
-    },
+    }
 };

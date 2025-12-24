@@ -1,13 +1,12 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const UserProfile = require("../../schemas/UserProfile");
 
-// Winner Log Channel
 const WIN_CHANNEL_ID = "1453275098038538374";
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("mines")
-        .setDescription("Play Mines and win big!")
+        .setDescription("Play Mines with a full 25-tile grid")
         .addIntegerOption(opt => opt.setName("bet").setDescription("Amount to bet").setRequired(true))
         .addIntegerOption(opt => 
             opt.setName("bombs")
@@ -23,14 +22,13 @@ module.exports = {
         const userId = interaction.user.id;
 
         let profile = await UserProfile.findOne({ userId });
-        if (!profile || profile.balance < bet) return interaction.reply({ content: "❌ You have insufficient balance!", ephemeral: true });
+        if (!profile || profile.balance < bet) return interaction.reply({ content: "❌ Insufficient balance!", ephemeral: true });
 
-        // Initial Balance Deduction
         profile.balance -= bet;
         profile.wageredAmount = (profile.wageredAmount || 0) + bet;
         await profile.save();
 
-        // Game Grid Generation
+        // Internal Game Logic
         let grid = Array(25).fill("diamond");
         let bombs = [];
         while (bombs.length < bombCount) {
@@ -46,7 +44,6 @@ module.exports = {
         let gameOver = false;
 
         const getMultiplier = (revealedCount) => {
-            // Standard Casino Multiplier Formula
             let m = 0.97 * (25 / (25 - bombCount));
             for(let i = 1; i < revealedCount; i++) {
                 m *= (25 - i) / (25 - bombCount - i);
@@ -54,6 +51,7 @@ module.exports = {
             return m.toFixed(2);
         };
 
+        // Function to create the 25-button grid (5 rows)
         const createGrid = (showAll = false) => {
             const rows = [];
             for (let i = 0; i < 5; i++) {
@@ -73,50 +71,65 @@ module.exports = {
                 }
                 rows.push(row);
             }
-            
-            const cashoutRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId("cashout")
-                    .setLabel(`Cashout (x${getMultiplier(revealed.length)})`)
-                    .setStyle(ButtonStyle.Success)
-                    .setDisabled(revealed.length === 0 || gameOver)
-            );
-            rows.push(cashoutRow);
             return rows;
         };
 
-        const embed = new EmbedBuilder()
-            .setAuthor({ name: `${interaction.user.username}'s Mines Game`, iconURL: interaction.user.displayAvatarURL() })
+        // Initial Grid Message
+        const gridEmbed = new EmbedBuilder()
+            .setAuthor({ name: `${interaction.user.username}'s Mines Grid`, iconURL: interaction.user.displayAvatarURL() })
             .setColor("#2b2d31")
-            .setDescription(`**Bet:** 🪙 ${bet.toLocaleString()}\n**Bombs:** 💣 ${bombCount}\n**Multiplier:** x1.00`)
-            .setFooter({ text: "Find diamonds to increase your multiplier!" });
+            .setDescription(`**Bet:** 🪙 ${bet.toLocaleString()} | **Bombs:** 💣 ${bombCount}`);
 
-        const msg = await interaction.reply({ embeds: [embed], components: createGrid() });
-        const collector = msg.createMessageComponentCollector({ filter: i => i.user.id === userId, time: 300000 });
+        const gridMsg = await interaction.reply({ embeds: [gridEmbed], components: createGrid(), fetchReply: true });
+
+        // Second Message: Cashout Controller
+        const controllerEmbed = new EmbedBuilder()
+            .setTitle("🎮 Game Controller")
+            .setDescription(`Current Multiplier: **x1.00**\nPotential Profit: **🪙 0**`)
+            .setColor("#f1c40f");
+
+        const cashoutRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("cashout").setLabel("Cashout").setStyle(ButtonStyle.Success).setDisabled(true)
+        );
+
+        const controllerMsg = await interaction.channel.send({ 
+            content: `${interaction.user}, use this to cash out:`, 
+            embeds: [controllerEmbed], 
+            components: [cashoutRow] 
+        });
+
+        // Collector for both messages
+        const filter = i => i.user.id === userId;
+        const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
 
         collector.on("collect", async i => {
             if (i.customId.startsWith("mine_")) {
                 const index = parseInt(i.customId.split("_")[1]);
-                if (revealed.includes(index)) return i.deferUpdate();
+                if (revealed.includes(index) || gameOver) return i.deferUpdate();
                 
                 revealed.push(index);
 
                 if (grid[index] === "bomb") {
                     gameOver = true;
                     collector.stop("lost");
-                    return i.update({ 
-                        embeds: [embed.setTitle("💥 GAME OVER").setColor("#ff4b2b").setDescription(`**Lost:** 🪙 ${bet.toLocaleString()}\n**Bombs:** 💣 ${bombCount}`)], 
-                        components: createGrid(true) 
-                    });
+                    await i.update({ embeds: [gridEmbed.setTitle("💥 BOOM!")], components: createGrid(true) });
+                    return controllerMsg.edit({ content: "❌ You hit a bomb!", embeds: [], components: [] });
                 } else {
                     multiplier = getMultiplier(revealed.length);
-                    if (revealed.length === (25 - bombCount)) return collector.stop("win");
-                    await i.update({ 
-                        embeds: [embed.setDescription(`**Bet:** 🪙 ${bet.toLocaleString()}\n**Bombs:** 💣 ${bombCount}\n**Current Multiplier:** x${multiplier}`)], 
-                        components: createGrid() 
+                    const currentProfit = Math.floor(bet * multiplier);
+                    
+                    await i.update({ components: createGrid() });
+                    
+                    // Update the SECOND message (Controller)
+                    await controllerMsg.edit({
+                        embeds: [controllerEmbed.setDescription(`Current Multiplier: **x${multiplier}**\nPotential Win: **🪙 ${currentProfit.toLocaleString()}**`)],
+                        components: [new ActionRowBuilder().addComponents(
+                            new ButtonBuilder().setCustomId("cashout").setLabel(`Cashout 🪙 ${currentProfit}`).setStyle(ButtonStyle.Success)
+                        )]
                     });
                 }
             } else if (i.customId === "cashout") {
+                gameOver = true;
                 collector.stop("cashout");
                 await i.deferUpdate();
             }
@@ -129,14 +142,16 @@ module.exports = {
                 user.balance += finalWin;
                 await user.save();
 
-                await interaction.editReply({ 
-                    embeds: [embed.setTitle("🎉 SUCCESSFUL CASHOUT").setDescription(`**Won:** 🪙 ${finalWin.toLocaleString()}\n**Multiplier:** x${multiplier}`).setColor("#2ecc71")], 
-                    components: createGrid(true) 
+                await gridMsg.edit({ embeds: [gridEmbed.setTitle("🎉 SAFE").setColor("#2ecc71")], components: createGrid(true) });
+                await controllerMsg.edit({ 
+                    content: `✅ **Profit Cashed Out!** You won **🪙 ${finalWin.toLocaleString()}**`, 
+                    embeds: [], 
+                    components: [] 
                 });
 
                 const winChannel = interaction.guild.channels.cache.get(WIN_CHANNEL_ID);
                 if (winChannel) {
-                    winChannel.send(`💣 **${interaction.user.username}** just cashed out **🪙 ${finalWin.toLocaleString()}** (x${multiplier}) with **${bombCount} bombs**!`);
+                    winChannel.send(`💣 **${interaction.user.username}** won **🪙 ${finalWin.toLocaleString()}** (x${multiplier}) in Mines!`);
                 }
             }
         });
