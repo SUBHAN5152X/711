@@ -10,22 +10,22 @@ const PREFIX = process.env.PREFIX || "-";
 const invites = new Map();
 
 /* ================================
-    1. EXPRESS SERVER (Fast Deploy)
+    EXPRESS SERVER (For Render 24/7)
 ================================ */
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 10000;
-
-app.get('/', (req, res) => res.send('711 Bet Bot is Live!'));
-
-// Render ko port detection mein delay na ho isliye ise pehle run kar rahe hain
-app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Web server active on port ${port}`);
-});
+app.get('/', (req, res) => res.send('711 Bet Bot is Online!'));
+app.listen(port, () => console.log(`✅ Web server active on port ${port}`));
 
 /* ================================
-    2. BOT SETUP
+    CHANNEL CONFIGURATION
 ================================ */
+const RESTRICTED_CHANNELS = [
+    "1453274442548514860", // General Chat ID
+    "1453327792119742524"  // Media ID
+];
+
 const client = new Client({
     intents: [
         IntentsBitField.Flags.Guilds,
@@ -39,18 +39,14 @@ const client = new Client({
 client.commands = new Collection();
 
 /* ================================
-    3. CHANNEL & READY LOGIC
+    READY EVENT (Cleanup & Invites)
 ================================ */
-const RESTRICTED_CHANNELS = [
-    "1453274442548514860", // General Chat
-    "1453327792119742524"  // Media
-];
-
 client.on("ready", async () => {
     try {
-        console.log("🔄 Cleaning ghost commands...");
+        console.log("🔄 Refreshing global slash commands...");
+        // Clearing ghost commands safely inside ready event
         await client.application.commands.set([]); 
-        console.log("✅ Commands refreshed!");
+        console.log("✅ Ghost commands cleared from Discord!");
     } catch (error) {
         console.error("Cleanup error:", error);
     }
@@ -59,6 +55,7 @@ client.on("ready", async () => {
         try {
             const firstInvites = await guild.invites.fetch();
             invites.set(guild.id, new Map(firstInvites.map((inv) => [inv.code, inv.uses])));
+            console.log(`✅ Cached invites for: ${guild.name}`);
         } catch (err) {
             console.log(`❌ Invite Cache Error: ${err.message}`);
         }
@@ -67,7 +64,7 @@ client.on("ready", async () => {
 });
 
 /* ================================
-    4. INTERACTION & INVITE LOGIC
+    INVITE TRACKER
 ================================ */
 client.on("guildMemberAdd", async (member) => {
     try {
@@ -89,44 +86,77 @@ client.on("guildMemberAdd", async (member) => {
         }
         invites.set(member.guild.id, new Map(newInvites.map((inv) => [inv.code, inv.uses])));
     } catch (err) {
-        console.error("Invite Error:", err);
+        console.error("Invite Track Error:", err);
     }
 });
 
+/* ================================
+    INTERACTION HANDLER
+================================ */
 client.on("interactionCreate", async (interaction) => {
+    if (interaction.isAutocomplete()) {
+        const command = client.commands.get(interaction.commandName);
+        if (command?.autocomplete) await command.autocomplete({ interaction, client });
+        return;
+    }
+
     if (interaction.isChatInputCommand()) {
         if (RESTRICTED_CHANNELS.includes(interaction.channelId)) {
-            return interaction.reply({ content: "❌ Commands disabled here!", flags: [64] });
+            return interaction.reply({ 
+                content: "❌ Commands are disabled here. Please use the Game Rooms.", 
+                flags: [64] 
+            });
         }
     }
 
     if (interaction.isButton()) {
         if (interaction.customId === "ga_join") {
             const data = await Giveaway.findOne({ messageId: interaction.message.id });
-            if (!data || data.ended) return interaction.reply({ content: "❌ Ended!", flags: [64] });
+            if (!data || data.ended) return interaction.reply({ content: "❌ This giveaway has ended!", flags: [64] });
             if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: "❌ Already joined!", flags: [64] });
+
             data.participants.push(interaction.user.id);
             await data.save();
-            return interaction.reply({ content: "✅ Joined!", flags: [64] });
+            return interaction.reply({ content: "✅ Successfully joined!", flags: [64] });
         }
 
         if (interaction.customId === "verify_btn") {
             const roleId = "1453285948581216356";
-            if (Date.now() - interaction.user.createdTimestamp < 60 * 24 * 60 * 60 * 1000) {
-                return interaction.reply({ content: "❌ Account too new!", flags: [64] });
-            }
+            const sixtyDays = 60 * 24 * 60 * 60 * 1000;
+            const accountAge = Date.now() - interaction.member.user.createdTimestamp;
+
+            if (accountAge < sixtyDays) return interaction.reply({ content: "❌ Account must be 60 days old.", flags: [64] });
+
             try {
-                await interaction.member.roles.add(roleId);
-                return interaction.reply({ content: "✅ Verified!", flags: [64] });
+                const role = interaction.guild.roles.cache.get(roleId);
+                await interaction.member.roles.add(role);
+                return interaction.reply({ content: "✅ Verification successful!", flags: [64] });
             } catch (err) {
-                return interaction.reply({ content: "❌ Hierarchy Error!", flags: [64] });
+                return interaction.reply({ content: "❌ Role Hierarchy Error.", flags: [64] });
             }
         }
     }
 });
 
 /* ================================
-    5. STARTUP (The Fix)
+    GIVEAWAY MANAGER
+================================ */
+async function checkGiveaways() {
+    try {
+        const now = new Date();
+        const endedGiveaways = await Giveaway.find({ ended: false, endTime: { $lte: now } });
+        for (const data of endedGiveaways) {
+            data.ended = true;
+            await data.save();
+            // Logic to pick winner goes here
+        }
+    } catch (err) {
+        console.error("Giveaway Check Error:", err);
+    }
+}
+
+/* ================================
+    STARTUP LOGIC (Fixes ESM/Require Crash)
 ================================ */
 new CommandHandler({
     client,
@@ -141,6 +171,7 @@ async function startBot() {
         await mongoose.connect(process.env.MONGODB_URI);
         console.log("✅ Database Connected.");
         await client.login(process.env.TOKEN);
+        setInterval(checkGiveaways, 30000); 
     } catch (error) {
         console.error("Startup Error:", error);
     }
