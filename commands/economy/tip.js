@@ -1,45 +1,50 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const UserProfile = require("../../schemas/UserProfile"); 
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require("discord.js");
+const UserProfile = require("../../schemas/UserProfile");
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('tip')
-        .setDescription('Tip another user')
-        .addUserOption(o => o.setName('user').setDescription('User to tip').setRequired(true))
-        .addStringOption(o => o.setName('amount').setDescription('Amount (e.g. 100 or 0.25$)').setRequired(true)),
+        .setName("tip")
+        .setDescription("Tip points to another user")
+        .addUserOption(opt => opt.setName("user").setDescription("The user to tip").setRequired(true))
+        .addIntegerOption(opt => opt.setName("amount").setDescription("Amount to tip").setRequired(true)),
 
-    run: async ({ interaction, message, args }) => {
-        const user = interaction ? interaction.user : message.author;
-        if (interaction) await interaction.deferReply();
+    run: async ({ interaction }) => {
+        const targetUser = interaction.options.getUser("user");
+        const amount = interaction.options.getInteger("amount");
+        const senderId = interaction.user.id;
+
+        if (targetUser.id === senderId) return interaction.reply({ content: "❌ Khud ko tip nahi de sakte!", flags: [MessageFlags.Ephemeral] });
+        if (amount <= 0) return interaction.reply({ content: "❌ Amount 0 se zyada hona chahiye.", flags: [MessageFlags.Ephemeral] });
 
         try {
-            const targetUser = interaction ? interaction.options.getUser('user') : message.mentions.users.first();
-            const amountInput = interaction ? interaction.options.getString('amount') : (args ? args[1] : null);
+            // 1. Sender Profile Check (Crash protection)
+            let senderProfile = await UserProfile.findOne({ userId: senderId });
+            if (!senderProfile || senderProfile.balance < amount) {
+                return interaction.reply({ content: "❌ Aapke paas itne points nahi hain!", flags: [MessageFlags.Ephemeral] });
+            }
 
-            if (!targetUser || targetUser.id === user.id || targetUser.bot) return (interaction || message).reply("❌ Invalid user!");
+            // 2. Target Profile Check (Agar receiver database mein nahi hai toh create karo)
+            let targetProfile = await UserProfile.findOne({ userId: targetUser.id });
+            if (!targetProfile) {
+                targetProfile = new UserProfile({ userId: targetUser.id, balance: 0 });
+            }
 
-            let amount = amountInput?.endsWith('$') ? parseFloat(amountInput.replace('$', '')) * 100 : parseFloat(amountInput);
-            if (isNaN(amount) || amount <= 0) return (interaction || message).reply("❌ Invalid amount!");
+            // 3. Transaction
+            senderProfile.balance -= amount;
+            targetProfile.balance += amount;
 
-            const sender = await UserProfile.findOne({ userId: user.id });
-            if (!sender || sender.balance < amount) return (interaction || message).reply("❌ Insufficient balance!");
-
-            // --- Stats Update Logic ---
-            // Sender ke tipsSent badhao aur Receiver ke tipsReceived
-            await UserProfile.findOneAndUpdate({ userId: user.id }, { $inc: { balance: -amount, tipsSent: amount } });
-            await UserProfile.findOneAndUpdate(
-                { userId: targetUser.id }, 
-                { $inc: { balance: amount, tipsReceived: amount } },
-                { upsert: true }
-            );
+            await senderProfile.save();
+            await targetProfile.save();
 
             const tipEmbed = new EmbedBuilder()
-                .setAuthor({ name: `crushmminfo: Tip Sent`, iconURL: user.displayAvatarURL() })
-                .setDescription(`✅ <@${user.id}> tipped **🪙 ${amount.toFixed(2)}** to <@${targetUser.id}>`)
-                .setColor('#00ffcc')
-                .setFooter({ text: '711 Bet', iconURL: (interaction || message).client.user.displayAvatarURL() });
+                .setColor("#2ecc71")
+                .setDescription(`✅ **${interaction.user.username}** tipped **🪙 ${amount}** to **${targetUser.username}**!`);
 
-            return interaction ? await interaction.editReply({ embeds: [tipEmbed] }) : await message.channel.send({ embeds: [tipEmbed] });
-        } catch (e) { console.error(e); }
+            return await interaction.reply({ embeds: [tipEmbed] });
+
+        } catch (error) {
+            console.error("TIP_ERROR:", error);
+            return interaction.reply({ content: "❌ Transaction fail ho gayi. Baad mein try karein.", flags: [MessageFlags.Ephemeral] });
+        }
     },
 };

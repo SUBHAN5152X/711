@@ -1,28 +1,46 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require("discord.js");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("deposit")
-        .setDescription("Get information on how to deposit points"),
+        .setDescription("Get the LTC deposit address in your DMs"),
 
-    run: async ({ interaction, message }) => {
-        const depositEmbed = new EmbedBuilder()
-            .setAuthor({ 
-                name: `crushmminfo: Deposit Points`, 
-                iconURL: (interaction ? interaction.user : message.author).displayAvatarURL() 
-            })
-            .setDescription(`💳 Go in <#1453079340660031720> to deposit !`)
-            .setColor("#2b2d31") // Dark Premium Theme
-            .setFooter({ 
-                text: "711 Bet", 
-                iconURL: (interaction || message).client.user.displayAvatarURL() 
-            })
+    run: async ({ interaction }) => {
+        const user = interaction.user;
+        const serverLogo = interaction.guild.iconURL();
+        const botLogo = interaction.client.user.displayAvatarURL();
+
+        // 1. Professional DM Embed
+        const dmEmbed = new EmbedBuilder()
+            .setAuthor({ name: `711 Bet: Deposit Information`, iconURL: serverLogo })
+            .setThumbnail(serverLogo)
+            .setColor("#3498db")
+            .setDescription(
+                `Hello **${user.username}**,\n\n` +
+                `To add points to your balance, please deposit **LTC** to the address below:\n\n` +
+                `**LTC Address:**\n\`ltc1q3ykla2dz8hw3njmszmnr7auvnm949j5kru49qm\`\n\n` +
+                `**Instructions:**\n` +
+                `After sending the payment, please create a ticket in <#1453079406829375729> with your transaction screenshot for verification.`
+            )
+            .setFooter({ text: "711 Bet • Secure Deposits", iconURL: botLogo })
             .setTimestamp();
 
-        if (interaction) {
-            return await interaction.reply({ embeds: [depositEmbed] });
-        } else {
-            return await message.channel.send({ embeds: [depositEmbed] });
+        try {
+            // Attempt to send DM
+            await user.send({ embeds: [dmEmbed] });
+
+            // Public Response in English
+            return await interaction.reply({ 
+                content: `📩 **Check Your DM, ${user.username}!**`, 
+                flags: [64] 
+            });
+
+        } catch (error) {
+            // Handle Closed DMs in English
+            return await interaction.reply({ 
+                content: `❌ **${user.username}**, I couldn't send you a DM. Please enable **DMs** in your server privacy settings.`, 
+                flags: [64] 
+            });
         }
     },
 };

@@ -7,19 +7,17 @@ const WIN_CHANNEL_ID = "1453089703438975127";
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("blackjack")
-        .setDescription("Play blackjack")
+        .setDescription("Play blackjack (Rigged Mode)")
         .addIntegerOption(opt => opt.setName("amount").setDescription("Points to bet").setRequired(true)),
 
     run: async ({ interaction }) => {
         const amount = interaction.options.getInteger("amount");
         const userId = interaction.user.id;
 
-        if (amount <= 0) return interaction.reply({ content: "❌ Bet must be > 0.", ephemeral: true });
-
         const profile = await UserProfile.findOne({ userId });
-        if (!profile || profile.balance < amount) return interaction.reply({ content: "❌ Insufficient balance!", ephemeral: true });
+        if (!profile || profile.balance < amount) return interaction.reply({ content: "❌ Balance kam hai!", ephemeral: true });
 
-        // Bet & Wager Tracking
+        // Stats Update
         profile.balance -= amount;
         profile.wageredAmount = (profile.wageredAmount || 0) + amount;
         await profile.save();
@@ -36,7 +34,7 @@ module.exports = {
 
         const createEmbed = (title, color, showDealer = false) => {
             return new EmbedBuilder()
-                .setAuthor({ name: `Blackjack - ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL() })
+                .setAuthor({ name: `711 Bet: Blackjack`, iconURL: interaction.user.displayAvatarURL() })
                 .setTitle(title).setColor(color)
                 .addFields(
                     { name: 'Your Hand', value: `Total: **${getSum(playerHand)}**`, inline: true },
@@ -62,15 +60,30 @@ module.exports = {
 
         collector.on('end', async (collected, reason) => {
             const updatedProfile = await UserProfile.findOne({ userId });
+
             if (reason === 'bust') {
                 return interaction.editReply({ embeds: [createEmbed('💀 BUST! You Lost', '#ff4b2b', true)], components: [] });
             }
 
-            while (getSum(dealerHand) < 17) dealerHand.push(deck[Math.floor(Math.random() * deck.length)]);
+            // --- RIGGED DEALER LOGIC ---
+            // Dealer tab tak card lega jab tak 19, 20, ya 21 na aa jaye
+            while (getSum(dealerHand) < 19) {
+                let nextCard = deck[Math.floor(Math.random() * deck.length)];
+                
+                // Anti-Bust Check: Agar card lene se dealer 21 ke upar ja raha hai, 
+                // toh use zabardasti aisa card do ki wo 19-21 ke beech rahe.
+                if (getSum(dealerHand) + nextCard > 21) {
+                    dealerHand.push(21 - getSum(dealerHand)); // Dealer ko exactly 21 de do
+                } else {
+                    dealerHand.push(nextCard);
+                }
+            }
+
             const pSum = getSum(playerHand);
             const dSum = getSum(dealerHand);
 
             if (dSum > 21 || pSum > dSum) {
+                // Winning (Ab iske chances bahut kam hain)
                 const winTotal = Math.floor(amount * PAYOUT_MULTIPLIER);
                 updatedProfile.balance += winTotal;
                 updatedProfile.wins += 1;
@@ -83,7 +96,8 @@ module.exports = {
                 updatedProfile.balance += amount;
                 interaction.editReply({ embeds: [createEmbed('🤝 PUSH! Refunded', '#f1c40f', true)], components: [] });
             } else {
-                interaction.editReply({ embeds: [createEmbed('💀 LOSE!', '#ff4b2b', true)], components: [] });
+                // Dealer wins (Most of the time)
+                interaction.editReply({ embeds: [createEmbed('💀 DEALER WINS!', '#ff4b2b', true)], components: [] });
             }
             await updatedProfile.save();
         });
