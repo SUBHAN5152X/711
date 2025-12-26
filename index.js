@@ -25,7 +25,7 @@ const client = new Client({
         IntentsBitField.Flags.Guilds,
         IntentsBitField.Flags.GuildMembers,
         IntentsBitField.Flags.GuildMessages,
-        IntentsBitField.Flags.MessageContent,
+        IntentsBitField.Flags.MessageContent, // ⚠️ Developer Portal par ON hona zaroori hai
         IntentsBitField.Flags.GuildInvites,
     ],
 });
@@ -37,26 +37,18 @@ client.commands = new Collection();
 ================================ */
 client.on("ready", () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
-    
-    // Commands refresh (Using .then to avoid Top-Level Await crash)
-    client.application.commands.set([])
-        .then(() => console.log("🔄 Global commands refreshed."))
-        .catch(err => console.error("❌ Refresh Error:", err.message));
+    console.log("🚀 Bot is online and ready to accept commands.");
 });
 
 /* ================================
-    4. COMMAND HANDLER (Safe Load)
+    4. COMMAND HANDLER
 ================================ */
-try {
-    new CommandHandler({
-        client,
-        eventsPath: path.join(__dirname, "events"),
-        commandsPath: path.join(__dirname, "commands"),
-    });
-    console.log("📂 Command handler initialized.");
-} catch (error) {
-    console.error("⚠️ Error loading commands:", error.message);
-}
+new CommandHandler({
+    client,
+    eventsPath: path.join(__dirname, "events"),
+    commandsPath: path.join(__dirname, "commands"),
+});
+console.log("📂 Command handler initialized.");
 
 /* ================================
     5. DATABASE & STARTUP
@@ -67,15 +59,13 @@ mongoose.connect(process.env.MONGODB_URI)
         console.log("✅ Database Connection: SUCCESS");
         return client.login(process.env.TOKEN);
     })
-    .then(() => {
-        console.log("🚀 Bot is fully operational.");
-    })
     .catch((err) => {
         console.error("❌ Startup Failed:", err.message);
-        // Bot crash na ho isliye exit nahi kar rahe
     });
 
-// Uncaught errors handling (Bot ko band hone se rokne ke liye)
+/* ================================
+    6. ANTI-CRASH SYSTEM
+================================ */
 process.on('unhandledRejection', (reason, promise) => {
     console.error('🔴 Unhandled Rejection:', reason);
 });
